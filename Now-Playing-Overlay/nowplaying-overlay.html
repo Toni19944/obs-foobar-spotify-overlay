@@ -225,10 +225,10 @@ const CONFIG = {
   SPECTRUM_PORT:     9001,
   VIS_COLOR:         '255, 255, 255',
   VIS_MAX_OPACITY:   0.83,
-  VIS_BAR_DEPTH:     24,
-  VIS_BLUR:          8,
+  VIS_BAR_DEPTH:     22,
+  VIS_BLUR:          12,
   VIS_SMOOTHING:     0.25,
-  VIS_BANDS:         67,
+  VIS_BANDS:         44,
 };
 
 // ── Elements ───────────────────────────────────────────────────
@@ -331,7 +331,7 @@ function updateUI({ artist, title, position, duration, volume }) {
   // Dynamic visualizer gain — logarithmic dB compensation
   // Reference point: -25dB = 1.0x, -40dB = ~5.6x, -10dB = ~0.18x
   if (volume !== null && isFinite(volume) && volume < 0) {
-    visGain = Math.max(0.4, Math.min(3.0, Math.pow(10, ((-25) - volume) / 40)));
+    visGain = Math.abs(volume) / 25;
   }
 }
 

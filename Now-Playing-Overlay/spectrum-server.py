@@ -31,14 +31,14 @@ import sounddevice as sd
 PORT        = 9001          # WebSocket port the overlay connects to
 DEVICE      = 'Line 1'      # Partial name match of your audio input device
 SAMPLE_RATE = 44100         # Hz — standard audio sample rate
-CHUNK       = 2048          # Samples per capture chunk
+CHUNK       = 1024          # Samples per capture chunk
 BANDS       = 64            # Number of frequency bands to output
 FPS         = 30            # Target updates per second
 SMOOTHING   = 0.67          # 0–1 — higher = smoother/slower band response
-GAIN        = 5             # Amplification — increase if bands are too quiet
+GAIN        = 10             # Amplification — increase if bands are too quiet
 
 # Frequency range to analyse (Hz)
-FREQ_MIN    = 40
+FREQ_MIN    = 120
 FREQ_MAX    = 16000
 
 # ═══════════════════════════════════════════════════════════════
@@ -46,6 +46,7 @@ FREQ_MAX    = 16000
 # ═══════════════════════════════════════════════════════════════
 
 band_levels  = [0.0] * BANDS   # current smoothed band values
+peak_levels  = [1.0] * BANDS   # per-band peak tracker for normalization
 clients      = set()           # connected WebSocket clients
 lock         = threading.Lock()
 
@@ -80,6 +81,11 @@ def compute_bands(data):
     # Flatten stereo to mono if needed
     if data.ndim > 1:
         data = data.mean(axis=1)
+        
+    # Noise gate — silence if signal is too quiet
+    rms = float(np.sqrt(np.mean(data**2)))
+    if rms < 0.0002:
+        return [0.0] * BANDS
 
     # Apply Hann window to reduce spectral leakage
     window  = np.hanning(len(data))
@@ -113,14 +119,8 @@ def compute_bands(data):
 
     # Gentle taper across full range
     for i in range(len(band_vals)):
-        bass_boost = 1.0 + (1.0 - i / len(band_vals)) * 1.08
+        bass_boost = 1.0 + (i / len(band_vals)) * 1.4
         band_vals[i] *= bass_boost
-
-    # Extra targeted bass boost for lowest 20% of bands
-    bass_cutoff = int(len(band_vals) * 0.2)
-    for i in range(bass_cutoff):
-        extra = 1.0 + (1.0 - i / bass_cutoff) * 1.15
-        band_vals[i] *= extra
 
     # Normalise to 0–1 with gain — use absolute scale, not relative peak
     band_vals = [min(1.0, v * GAIN) for v in band_vals]
@@ -130,11 +130,17 @@ def compute_bands(data):
 
 def audio_callback(indata, frames, time, status):
     """Called by sounddevice for each captured chunk."""
-    global band_levels
+    global band_levels, peak_levels
     if status:
         print(f"  Audio status: {status}", file=sys.stderr)
 
     new_bands = compute_bands(indata)
+
+    # Per-band peak normalization — prevents loud bands from pinning at 1.0
+    for i in range(BANDS):
+        peak_levels[i] = max(peak_levels[i] * 0.995, new_bands[i])
+        if peak_levels[i] > 0:
+            new_bands[i] = min(1.0, new_bands[i] / peak_levels[i])
 
     with lock:
         for i in range(BANDS):
