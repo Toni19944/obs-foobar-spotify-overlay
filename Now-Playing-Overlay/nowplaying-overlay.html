@@ -87,10 +87,12 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transform: scale(var(--img-scale));
-    filter: blur(var(--img-blur));
+    /* Base image styling stays intact; FFT motion only modulates these values */
+    transform: scale(calc(var(--img-scale) * var(--bg-dyn-scale, 1)));
+    filter: blur(calc(var(--img-blur) + var(--bg-dyn-blur, 0px)));
     opacity: 0;
     transition: opacity 0.9s ease;
+    will-change: transform, filter;
   }
 
   .bg-img.active { opacity: var(--img-opacity); }
@@ -229,6 +231,21 @@ const CONFIG = {
   VIS_BLUR:          12,
   VIS_SMOOTHING:     0.25,
   VIS_BANDS:         44,
+  
+  // ── BACKGROUND FFT MOTION (independent from visualizer) ──────
+  // Separate WebSocket client + separate smoothing/band logic.
+  // This only affects the background image and does not touch the
+  // existing glow/visualizer system in any way.
+  BG_MOTION: true,
+  BG_MOTION_BANDS: 6,          // group server FFT into 6 broad bands
+  BG_BASE_BLUR: 0.10,          // extra blur always present on top of --img-blur
+  BG_BLUR_MAX_ADD: 0.71,       // FFT blur modulation stays very small
+  BG_ZOOM_MAX_ADD: 0.18,      // ~1.8% max extra zoom from FFT
+  BG_BASELINE_ZOOM: 0.015,    // slow continuous "breathing"
+  BG_ZOOM_SMOOTH: 0.032,       // slow inertia for cinematic zoom
+  BG_BLUR_SMOOTH: 0.032,       // slightly faster inertia for blur
+  BG_DELAY_SMOOTH: 0.020,      // intentional lag vs foreground glow
+  BG_MICRO_SMOOTH: 0.045,      // heavily smoothed high-band micro motion
 };
 
 // ── Elements ───────────────────────────────────────────────────
@@ -333,6 +350,128 @@ function updateUI({ artist, title, position, duration, volume }) {
   if (volume !== null && isFinite(volume) && volume < 0) {
     visGain = Math.abs(volume) / 25;
   }
+}
+
+// ── Background FFT motion (independent system) ─────────────────
+// Separate FFT consumer for background image only.
+// - Groups incoming FFT into broad bands
+// - Shapes signal with a curve to soften low-level chatter
+// - Uses delayed targets + inertia so motion trails behind glow
+function initBackgroundMotion() {
+  if (!CONFIG.IMAGES || !CONFIG.BG_MOTION) return;
+
+  const root = document.documentElement;
+  const BAND_GROUPS = CONFIG.BG_MOTION_BANDS;
+
+  // Independent state — does not share or reuse visualizer logic/state
+  const groupedBands = new Array(BAND_GROUPS).fill(0);
+
+  let delayedLowTarget = 0;
+  let delayedMidTarget = 0;
+  let delayedHighTarget = 0;
+
+  let zoomValue = 1;
+  let blurValue = CONFIG.BG_BASE_BLUR;
+  let microValue = 0;
+
+  // Soft shaping to reduce chatter/spikes and keep motion subtle
+  function shape(v) {
+    const clamped = Math.max(0, Math.min(1, v));
+    return Math.pow(clamped, 1.55);
+  }
+
+  // Group 64 server bands into 6 broad bands.
+  // Using averaged ranges keeps the response stable and musical.
+  function regroup(src) {
+    if (!Array.isArray(src) || !src.length) return;
+
+    for (let i = 0; i < BAND_GROUPS; i++) {
+      const start = Math.floor(i * src.length / BAND_GROUPS);
+      const end   = Math.max(start + 1, Math.floor((i + 1) * src.length / BAND_GROUPS));
+
+      let sum = 0;
+      for (let j = start; j < end; j++) sum += src[j] || 0;
+      groupedBands[i] = sum / (end - start);
+    }
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const t = performance.now() * 0.001;
+
+    // Broad frequency mapping:
+    // - bass drives slow zoom
+    // - mids drive blur
+    // - highs add tiny, heavily-smoothed micro-variation
+    const lowRaw  = (groupedBands[0] * 0.72) + (groupedBands[1] * 0.28);
+    const midRaw  = (groupedBands[2] * 0.55) + (groupedBands[3] * 0.45);
+    const highRaw = (groupedBands[4] * 0.45) + (groupedBands[5] * 0.55);
+
+    // Shape + soft clamp so peaks do not snap the image
+    const lowTarget  = Math.min(0.95, shape(lowRaw));
+    const midTarget  = Math.min(0.85, shape(midRaw) * 0.9);
+    const highTarget = Math.min(0.70, shape(highRaw) * 0.7);
+
+    // Intentional response delay: background trails the foreground glow
+    delayedLowTarget  += (lowTarget  - delayedLowTarget)  * CONFIG.BG_DELAY_SMOOTH;
+    delayedMidTarget  += (midTarget  - delayedMidTarget)  * (CONFIG.BG_DELAY_SMOOTH * 1.15);
+    delayedHighTarget += (highTarget - delayedHighTarget) * (CONFIG.BG_DELAY_SMOOTH * 0.9);
+
+    // Slow baseline breathing independent of FFT
+    const baselineZoom =
+      1 +
+      CONFIG.BG_BASELINE_ZOOM * (
+        0.5 +
+        0.5 * Math.sin(t * 0.16)
+      );
+
+    // Tiny high-band variation, smoothed enough to avoid visual noise
+    microValue += (delayedHighTarget - microValue) * CONFIG.BG_MICRO_SMOOTH;
+
+    // Map FFT → zoom/blur
+    // Zoom is bass-led and extremely restrained
+    const zoomTarget =
+      baselineZoom +
+      (delayedLowTarget * CONFIG.BG_ZOOM_MAX_ADD) +
+      (microValue * 0.0015);
+
+    // Blur always keeps a small base amount; mids add subtle modulation
+    const blurTarget =
+      CONFIG.BG_BASE_BLUR +
+      (delayedMidTarget * CONFIG.BG_BLUR_MAX_ADD) +
+      (microValue * 0.06);
+
+    // Inertia smoothing:
+    // value += (target - value) * smoothingFactor
+    // Zoom is slower than blur so it feels deeper / heavier.
+    zoomValue += (zoomTarget - zoomValue) * CONFIG.BG_ZOOM_SMOOTH;
+    blurValue += (blurTarget - blurValue) * CONFIG.BG_BLUR_SMOOTH;
+
+    root.style.setProperty('--bg-dyn-scale', zoomValue.toFixed(5));
+    root.style.setProperty('--bg-dyn-blur',  `${blurValue.toFixed(3)}px`);
+  }
+
+  function connect() {
+    const ws = new WebSocket(`ws://localhost:${CONFIG.SPECTRUM_PORT}`);
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        regroup(data);
+      } catch (_) {}
+    };
+
+    ws.onclose = () => setTimeout(connect, 3000);
+    ws.onerror = () => {};
+  }
+
+  // Initialize subtle baseline state immediately
+  root.style.setProperty('--bg-dyn-scale', '1');
+  root.style.setProperty('--bg-dyn-blur', `${CONFIG.BG_BASE_BLUR.toFixed(3)}px`);
+
+  animate();
+  connect();
 }
 
 // ── Fetch ───────────────────────────────────────────────────────
@@ -494,6 +633,7 @@ function initVisualizer() {
   connect();
 }
 
+initBackgroundMotion();
 initVisualizer();
 </script>
 </body>
