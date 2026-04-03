@@ -23,6 +23,7 @@ import sys
 import threading
 import numpy as np
 import sounddevice as sd
+import websockets                       # (11) moved to top-level
 
 # ═══════════════════════════════════════════════════════════════
 #  CONFIGURATION
@@ -42,11 +43,48 @@ FREQ_MIN    = 120
 FREQ_MAX    = 16000
 
 # ═══════════════════════════════════════════════════════════════
+#  PRECOMPUTED CONSTANTS  (1, 2, 3)
+# ═══════════════════════════════════════════════════════════════
+
+# (2) Hann window — always the same size as CHUNK
+_WINDOW = np.hanning(CHUNK).astype(np.float32)
+
+# (3) Frequency axis & mask — constant for a given CHUNK / SAMPLE_RATE
+_ALL_FREQS = np.fft.rfftfreq(CHUNK, d=1.0 / SAMPLE_RATE)
+_FREQ_MASK = (_ALL_FREQS >= FREQ_MIN) & (_ALL_FREQS <= FREQ_MAX)
+_MASKED_FREQS = _ALL_FREQS[_FREQ_MASK]
+
+# (1) Band-edge bin indices — maps each masked FFT bin to a band index
+#     so we can use np.bincount instead of 64× np.where
+_LOG_MIN = np.log10(FREQ_MIN)
+_LOG_MAX = np.log10(FREQ_MAX)
+_EDGES   = np.logspace(_LOG_MIN, _LOG_MAX, BANDS + 1)
+
+_BIN_TO_BAND = np.full(len(_MASKED_FREQS), -1, dtype=np.intp)
+for _b in range(BANDS):
+    _in_band = (_MASKED_FREQS >= _EDGES[_b]) & (_MASKED_FREQS < _EDGES[_b + 1])
+    _BIN_TO_BAND[_in_band] = _b
+# Include the very last edge frequency in the final band
+_BIN_TO_BAND[_MASKED_FREQS == _EDGES[-1]] = BANDS - 1
+
+# Boolean mask for bins that actually belong to a band (drop any gaps)
+_VALID_BINS  = _BIN_TO_BAND >= 0
+_BIN_TO_BAND_VALID = _BIN_TO_BAND[_VALID_BINS]
+
+# Per-band bin counts for averaging (float for division)
+_BAND_COUNTS = np.bincount(_BIN_TO_BAND_VALID, minlength=BANDS).astype(np.float64)
+_BAND_COUNTS[_BAND_COUNTS == 0] = 1.0   # avoid division by zero
+
+# Pre-allocate a zero array for the noise-gate fast path
+_ZEROS = np.zeros(BANDS, dtype=np.float64)
+
+# ═══════════════════════════════════════════════════════════════
 #  GLOBALS
 # ═══════════════════════════════════════════════════════════════
 
-band_levels  = [0.0] * BANDS   # current smoothed band values
-peak_levels  = [1.0] * BANDS   # per-band peak tracker for normalization
+# (5) numpy arrays instead of Python lists
+band_levels  = np.zeros(BANDS, dtype=np.float64)
+peak_levels  = np.ones(BANDS, dtype=np.float64)
 clients      = set()           # connected WebSocket clients
 lock         = threading.Lock()
 
@@ -81,49 +119,32 @@ def compute_bands(data):
     # Flatten stereo to mono if needed
     if data.ndim > 1:
         data = data.mean(axis=1)
-        
+
     # Noise gate — silence if signal is too quiet
-    rms = float(np.sqrt(np.mean(data**2)))
+    rms = float(np.sqrt(np.mean(data ** 2)))
     if rms < 0.0002:
-        return [0.0] * BANDS
+        return _ZEROS
 
-    # Apply Hann window to reduce spectral leakage
-    window  = np.hanning(len(data))
-    windowed = data * window
+    # (2) Apply precomputed Hann window
+    windowed = data * _WINDOW
 
-    # FFT
+    # FFT — apply precomputed mask (3)
     fft_vals = np.abs(np.fft.rfft(windowed))
-    freqs    = np.fft.rfftfreq(len(windowed), d=1.0 / SAMPLE_RATE)
-
-    # Only keep frequencies in our range
-    mask     = (freqs >= FREQ_MIN) & (freqs <= FREQ_MAX)
-    freqs    = freqs[mask]
-    fft_vals = fft_vals[mask]
+    fft_vals = fft_vals[_FREQ_MASK]
 
     if len(fft_vals) == 0:
-        return [0.0] * BANDS
+        return _ZEROS
 
-    # Split into logarithmically spaced bands (sounds more natural)
-    log_min  = np.log10(FREQ_MIN)
-    log_max  = np.log10(FREQ_MAX)
-    edges    = np.logspace(log_min, log_max, BANDS + 1)
+    # (1) Vectorized band averaging via bincount
+    valid_fft = fft_vals[_VALID_BINS]
+    band_sums = np.bincount(_BIN_TO_BAND_VALID, weights=valid_fft, minlength=BANDS)
+    band_vals = band_sums / _BAND_COUNTS
 
-    band_vals = []
-    for i in range(BANDS):
-        lo, hi = edges[i], edges[i + 1]
-        idx    = np.where((freqs >= lo) & (freqs < hi))[0]
-        if len(idx) > 0:
-            band_vals.append(float(np.mean(fft_vals[idx])))
-        else:
-            band_vals.append(0.0)
+    # (4) Bass boost taper removed entirely
 
-    # Gentle taper across full range
-    for i in range(len(band_vals)):
-        bass_boost = 1.0 + (i / len(band_vals)) * 1.4
-        band_vals[i] *= bass_boost
-
-    # Normalise to 0–1 with gain — use absolute scale, not relative peak
-    band_vals = [min(1.0, v * GAIN) for v in band_vals]
+    # Normalise to 0–1 with gain
+    np.multiply(band_vals, GAIN, out=band_vals)
+    np.clip(band_vals, 0.0, 1.0, out=band_vals)
 
     return band_vals
 
@@ -136,15 +157,16 @@ def audio_callback(indata, frames, time, status):
 
     new_bands = compute_bands(indata)
 
-    # Per-band peak normalization — prevents loud bands from pinning at 1.0
-    for i in range(BANDS):
-        peak_levels[i] = max(peak_levels[i] * 0.995, new_bands[i])
-        if peak_levels[i] > 0:
-            new_bands[i] = min(1.0, new_bands[i] / peak_levels[i])
+    # (5) Vectorized per-band peak normalization
+    peak_levels *= 0.995
+    np.maximum(peak_levels, new_bands, out=peak_levels)
+    # Normalise — peak_levels is always >= 1.0 initially and decays, never zero
+    normalized = np.minimum(1.0, new_bands / peak_levels)
 
+    # (6) Minimal time under lock — single array operation
     with lock:
-        for i in range(BANDS):
-            band_levels[i] = band_levels[i] * SMOOTHING + new_bands[i] * (1 - SMOOTHING)
+        band_levels *= SMOOTHING
+        band_levels += normalized * (1.0 - SMOOTHING)
 
 # ═══════════════════════════════════════════════════════════════
 #  WEBSOCKET SERVER
@@ -164,23 +186,39 @@ async def handler(websocket):
 async def broadcast_loop():
     """Send band data to all connected clients at FPS rate."""
     interval = 1.0 / FPS
+    # (9) Drift-compensating sleep — anchor to wall clock
+    next_tick = asyncio.get_event_loop().time() + interval
+
     while True:
-        await asyncio.sleep(interval)
+        now = asyncio.get_event_loop().time()
+        sleep_for = max(0.0, next_tick - now)
+        await asyncio.sleep(sleep_for)
+        next_tick += interval
+        # If we fell behind by more than one full interval, reset
+        if next_tick < asyncio.get_event_loop().time():
+            next_tick = asyncio.get_event_loop().time() + interval
+
         if not clients:
             continue
+
         with lock:
-            payload = json.dumps([round(v, 4) for v in band_levels])
-        dead = set()
-        for ws in list(clients):
+            payload = json.dumps(np.round(band_levels, 4).tolist())
+
+        # (7) Parallel sends via asyncio.gather  (8) no list() copy needed
+        async def _send(ws):
             try:
                 await ws.send(payload)
+                return None
             except Exception:
-                dead.add(ws)
-        clients.difference_update(dead)
+                return ws
+
+        results = await asyncio.gather(*(_send(ws) for ws in clients))
+        dead = {ws for ws in results if ws is not None}
+        if dead:
+            clients.difference_update(dead)
 
 
 async def main_async(device_index):
-    import websockets
     print(f"\n  Spectrum server starting on ws://localhost:{PORT}")
     print(f"  Press Ctrl+C to stop\n")
 

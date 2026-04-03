@@ -45,6 +45,7 @@
   .card-wrap {
     position: relative;
     border-radius: var(--card-radius);
+    overflow: hidden;
   }
 
   #vis-canvas {
@@ -55,6 +56,8 @@
     pointer-events: none;
     z-index: 10;
     border-radius: var(--card-radius);
+    /* (#1) GPU-composited blur instead of per-stroke ctx.filter */
+    filter: blur(var(--vis-blur, 12px));
   }
 
   .card {
@@ -87,9 +90,6 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    /* Base image styling stays intact; FFT motion only modulates these values */
-    transform: scale(calc(var(--img-scale) * var(--bg-dyn-scale, 1)));
-    filter: blur(calc(var(--img-blur) + var(--bg-dyn-blur, 0px)));
     opacity: 0;
     transition: opacity 0.9s ease;
     will-change: transform, filter;
@@ -233,7 +233,7 @@ const CONFIG = {
   VIS_BANDS:         44,
   
   // ── BACKGROUND FFT MOTION (independent from visualizer) ──────
-  // Separate WebSocket client + separate smoothing/band logic.
+  // Separate smoothing/band logic from the visualizer.
   // This only affects the background image and does not touch the
   // existing glow/visualizer system in any way.
   BG_MOTION: true,
@@ -262,6 +262,26 @@ const trackClip = document.getElementById('track-clip');
 
 let imgQueue = [], allImages = [], activeLayer = 'a', lastTitle = '';
 let visGain  = 1.0;  // dynamic gain multiplier derived from foobar volume
+
+// (#1) Apply VIS_BLUR as a CSS variable for GPU-composited canvas blur
+document.getElementById('vis-canvas').style.setProperty('--vis-blur', CONFIG.VIS_BLUR + 'px');
+
+// (#4) Cache card radius — never changes at runtime
+const cachedCardRadius = parseFloat(getComputedStyle(document.documentElement)
+  .getPropertyValue('--card-radius')) || 20;
+
+// (#5) Parse VIS_COLOR once
+const [VIS_CR, VIS_CG, VIS_CB] = CONFIG.VIS_COLOR.split(',').map(s => s.trim());
+
+// (#7) Read base CSS values for bg-img once for direct style writes
+const bgBaseScale = parseFloat(getComputedStyle(document.documentElement)
+  .getPropertyValue('--img-scale')) || 1.06;
+const bgBaseBlur  = parseFloat(getComputedStyle(document.documentElement)
+  .getPropertyValue('--img-blur'))  || 1;
+
+// (#8) Visibility tracking for rAF pause
+let cardVisible = false;
+let rafId       = null;
 
 // ── Images ─────────────────────────────────────────────────────
 function shuffle(arr) {
@@ -343,7 +363,13 @@ function updateUI({ artist, title, position, duration, volume }) {
   }
   elTimer.textContent = fmtTime(position) + ' / ' + fmtTime(duration);
   elFill.style.width  = duration > 0 ? Math.min(100, (position / duration) * 100) + '%' : '0%';
-  card.classList.add('visible');
+
+  // (#8) Track visibility and start/stop rAF loop
+  if (!cardVisible) {
+    cardVisible = true;
+    card.classList.add('visible');
+    startAnimationLoop();
+  }
 
   // Dynamic visualizer gain — logarithmic dB compensation
   // Reference point: -25dB = 1.0x, -40dB = ~5.6x, -10dB = ~0.18x
@@ -352,126 +378,258 @@ function updateUI({ artist, title, position, duration, volume }) {
   }
 }
 
+// (#8) Hide card and stop rAF when nothing is playing
+function hideCard() {
+  if (cardVisible) {
+    cardVisible = false;
+    card.classList.remove('visible');
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+  }
+}
+
 // ── Background FFT motion (independent system) ─────────────────
 // Separate FFT consumer for background image only.
 // - Groups incoming FFT into broad bands
 // - Shapes signal with a curve to soften low-level chatter
 // - Uses delayed targets + inertia so motion trails behind glow
-function initBackgroundMotion() {
-  if (!CONFIG.IMAGES || !CONFIG.BG_MOTION) return;
 
-  const root = document.documentElement;
-  const BAND_GROUPS = CONFIG.BG_MOTION_BANDS;
+const BG_BAND_GROUPS = CONFIG.BG_MOTION_BANDS;
+const bgGroupedBands = new Array(BG_BAND_GROUPS).fill(0);
+let bgDelayedLow  = 0, bgDelayedMid  = 0, bgDelayedHigh = 0;
+let bgZoomValue   = 1, bgBlurValue   = CONFIG.BG_BASE_BLUR, bgMicroValue = 0;
+const bgEnabled   = CONFIG.IMAGES && CONFIG.BG_MOTION;
 
-  // Independent state — does not share or reuse visualizer logic/state
-  const groupedBands = new Array(BAND_GROUPS).fill(0);
+// Soft shaping to reduce chatter/spikes and keep motion subtle
+function bgShape(v) {
+  const clamped = Math.max(0, Math.min(1, v));
+  return Math.pow(clamped, 1.55);
+}
 
-  let delayedLowTarget = 0;
-  let delayedMidTarget = 0;
-  let delayedHighTarget = 0;
-
-  let zoomValue = 1;
-  let blurValue = CONFIG.BG_BASE_BLUR;
-  let microValue = 0;
-
-  // Soft shaping to reduce chatter/spikes and keep motion subtle
-  function shape(v) {
-    const clamped = Math.max(0, Math.min(1, v));
-    return Math.pow(clamped, 1.55);
+// Group 64 server bands into 6 broad bands
+function bgRegroup(src) {
+  if (!bgEnabled || !Array.isArray(src) || !src.length) return;
+  for (let i = 0; i < BG_BAND_GROUPS; i++) {
+    const start = Math.floor(i * src.length / BG_BAND_GROUPS);
+    const end   = Math.max(start + 1, Math.floor((i + 1) * src.length / BG_BAND_GROUPS));
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += src[j] || 0;
+    bgGroupedBands[i] = sum / (end - start);
   }
+}
 
-  // Group 64 server bands into 6 broad bands.
-  // Using averaged ranges keeps the response stable and musical.
-  function regroup(src) {
-    if (!Array.isArray(src) || !src.length) return;
+function bgAnimate(t) {
+  if (!bgEnabled) return;
 
-    for (let i = 0; i < BAND_GROUPS; i++) {
-      const start = Math.floor(i * src.length / BAND_GROUPS);
-      const end   = Math.max(start + 1, Math.floor((i + 1) * src.length / BAND_GROUPS));
+  // Broad frequency mapping:
+  // - bass drives slow zoom
+  // - mids drive blur
+  // - highs add tiny, heavily-smoothed micro-variation
+  const lowRaw  = (bgGroupedBands[0] * 0.72) + (bgGroupedBands[1] * 0.28);
+  const midRaw  = (bgGroupedBands[2] * 0.55) + (bgGroupedBands[3] * 0.45);
+  const highRaw = (bgGroupedBands[4] * 0.45) + (bgGroupedBands[5] * 0.55);
 
-      let sum = 0;
-      for (let j = start; j < end; j++) sum += src[j] || 0;
-      groupedBands[i] = sum / (end - start);
+  // Shape + soft clamp so peaks do not snap the image
+  const lowTarget  = Math.min(0.95, bgShape(lowRaw));
+  const midTarget  = Math.min(0.85, bgShape(midRaw) * 0.9);
+  const highTarget = Math.min(0.70, bgShape(highRaw) * 0.7);
+
+  // Intentional response delay: background trails the foreground glow
+  bgDelayedLow  += (lowTarget  - bgDelayedLow)  * CONFIG.BG_DELAY_SMOOTH;
+  bgDelayedMid  += (midTarget  - bgDelayedMid)  * (CONFIG.BG_DELAY_SMOOTH * 1.15);
+  bgDelayedHigh += (highTarget - bgDelayedHigh) * (CONFIG.BG_DELAY_SMOOTH * 0.9);
+
+  // Slow baseline breathing independent of FFT
+  const baselineZoom = 1 + CONFIG.BG_BASELINE_ZOOM * (0.5 + 0.5 * Math.sin(t * 0.16));
+
+  // Tiny high-band variation, smoothed enough to avoid visual noise
+  bgMicroValue += (bgDelayedHigh - bgMicroValue) * CONFIG.BG_MICRO_SMOOTH;
+
+  // Map FFT → zoom/blur
+  const zoomTarget = baselineZoom + (bgDelayedLow * CONFIG.BG_ZOOM_MAX_ADD) + (bgMicroValue * 0.0015);
+  const blurTarget = CONFIG.BG_BASE_BLUR + (bgDelayedMid * CONFIG.BG_BLUR_MAX_ADD) + (bgMicroValue * 0.06);
+
+  // Inertia smoothing — zoom is slower than blur so it feels deeper/heavier
+  bgZoomValue += (zoomTarget - bgZoomValue) * CONFIG.BG_ZOOM_SMOOTH;
+  bgBlurValue += (blurTarget - bgBlurValue) * CONFIG.BG_BLUR_SMOOTH;
+
+  // (#7) Write directly to active bg-img elements, bypassing CSS variable resolution
+  const finalScale = bgBaseScale * bgZoomValue;
+  const finalBlur  = bgBaseBlur + bgBlurValue;
+  const transformStr = `scale(${finalScale})`;
+  const filterStr    = `blur(${finalBlur}px)`;
+
+  if (bgA.classList.contains('active')) {
+    bgA.style.transform = transformStr;
+    bgA.style.filter    = filterStr;
+  }
+  if (bgB.classList.contains('active')) {
+    bgB.style.transform = transformStr;
+    bgB.style.filter    = filterStr;
+  }
+}
+
+// ── Visualizer ─────────────────────────────────────────────────
+const visCanvas  = document.getElementById('vis-canvas');
+const visCtx     = visCanvas.getContext('2d');
+const VIS_BANDS  = CONFIG.VIS_BANDS;
+const visBands   = new Float64Array(VIS_BANDS);  // smoothed
+const visRaw     = new Float64Array(VIS_BANDS);  // raw from WebSocket
+
+// (#9) Precomputed band positions — recalculated on resize only
+let bandPositions = null;  // [{x, y, nx, ny}, ...]
+let cachedBarW    = 3;
+
+function computeBandPositions() {
+  const W = visCanvas.width;
+  const H = visCanvas.height;
+  const R = cachedCardRadius;
+  const straightW = W - 2 * R;
+  const straightH = H - 2 * R;
+  const perimeter = 2 * straightW + 2 * straightH + Math.PI * 2 * R;
+  const bandStep  = perimeter / VIS_BANDS;
+
+  cachedBarW = Math.max(3, bandStep * 1.2);
+  bandPositions = new Array(VIS_BANDS);
+
+  for (let i = 0; i < VIS_BANDS; i++) {
+    const dist = i * bandStep + bandStep * 0.5;
+    let x, y, nx, ny;
+
+    if (dist < straightW) {
+      x = R + dist; y = 0; nx = 0; ny = 1;
+    } else if (dist < straightW + Math.PI * 0.5 * R) {
+      const a = (dist - straightW) / R;
+      x = W - R + Math.sin(a) * R; y = R - Math.cos(a) * R;
+      nx = -Math.sin(a); ny = -Math.cos(a);
+    } else if (dist < straightW + Math.PI * 0.5 * R + straightH) {
+      const d = dist - straightW - Math.PI * 0.5 * R;
+      x = W; y = R + d; nx = -1; ny = 0;
+    } else if (dist < straightW + Math.PI * R + straightH) {
+      const a = (dist - straightW - Math.PI * 0.5 * R - straightH) / R;
+      x = W - R + Math.cos(a) * R; y = H - R + Math.sin(a) * R;
+      nx = -Math.cos(a); ny = -Math.sin(a);
+    } else if (dist < 2 * straightW + Math.PI * R + straightH) {
+      const d = dist - straightW - Math.PI * R - straightH;
+      x = W - R - d; y = H; nx = 0; ny = -1;
+    } else if (dist < 2 * straightW + Math.PI * 1.5 * R + straightH) {
+      const a = (dist - 2 * straightW - Math.PI * R - straightH) / R;
+      x = R - Math.sin(a) * R; y = H - R + Math.cos(a) * R;
+      nx = Math.sin(a); ny = -Math.cos(a);
+    } else if (dist < 2 * straightW + Math.PI * 1.5 * R + 2 * straightH) {
+      const d = dist - 2 * straightW - Math.PI * 1.5 * R - straightH;
+      x = 0; y = H - R - d; nx = 1; ny = 0;
+    } else {
+      const a = (dist - 2 * straightW - Math.PI * 1.5 * R - 2 * straightH) / R;
+      x = R - Math.cos(a) * R; y = R - Math.sin(a) * R;
+      nx = Math.cos(a); ny = Math.sin(a);
     }
+
+    bandPositions[i] = { x, y, nx, ny };
+  }
+}
+
+// Size canvas to match card
+function visResize() {
+  visCanvas.width  = cardWrap.offsetWidth;
+  visCanvas.height = cardWrap.offsetHeight;
+  computeBandPositions();
+}
+visResize();
+window.addEventListener('resize', visResize);
+
+function visDraw() {
+  const W     = visCanvas.width;
+  const H     = visCanvas.height;
+  const depth = CONFIG.VIS_BAR_DEPTH;
+
+  visCtx.clearRect(0, 0, W, H);
+  // (#1) No ctx.filter — blur is handled by CSS on the canvas element
+
+  // Smooth bands — snappy attack, gentle decay
+  for (let i = 0; i < VIS_BANDS; i++) {
+    const target = visRaw[i];
+    const rate   = target > visBands[i]
+      ? CONFIG.VIS_SMOOTHING * 4
+      : CONFIG.VIS_SMOOTHING;
+    visBands[i] += (target - visBands[i]) * rate;
   }
 
-  function animate() {
-    requestAnimationFrame(animate);
+  // (#6) Reuse line settings across all bands
+  visCtx.lineCap = 'round';
+  visCtx.lineWidth = cachedBarW;
 
-    const t = performance.now() * 0.001;
+  for (let i = 0; i < VIS_BANDS; i++) {
+    if (visBands[i] < 0.005) continue;
 
-    // Broad frequency mapping:
-    // - bass drives slow zoom
-    // - mids drive blur
-    // - highs add tiny, heavily-smoothed micro-variation
-    const lowRaw  = (groupedBands[0] * 0.72) + (groupedBands[1] * 0.28);
-    const midRaw  = (groupedBands[2] * 0.55) + (groupedBands[3] * 0.45);
-    const highRaw = (groupedBands[4] * 0.45) + (groupedBands[5] * 0.55);
+    const pos   = bandPositions[i];
+    const barH  = visBands[i] * depth;
+    const alpha = visBands[i] * CONFIG.VIS_MAX_OPACITY;
+    const endX  = pos.x + pos.nx * barH;
+    const endY  = pos.y + pos.ny * barH;
 
-    // Shape + soft clamp so peaks do not snap the image
-    const lowTarget  = Math.min(0.95, shape(lowRaw));
-    const midTarget  = Math.min(0.85, shape(midRaw) * 0.9);
-    const highTarget = Math.min(0.70, shape(highRaw) * 0.7);
+    // (#6) Gradient with pre-parsed color channels — (#10) no .toFixed()
+    const grad = visCtx.createLinearGradient(pos.x, pos.y, endX, endY);
+    grad.addColorStop(0,   `rgba(${VIS_CR},${VIS_CG},${VIS_CB},${alpha})`);
+    grad.addColorStop(0.4, `rgba(${VIS_CR},${VIS_CG},${VIS_CB},${alpha * 0.6})`);
+    grad.addColorStop(1,   `rgba(${VIS_CR},${VIS_CG},${VIS_CB},0)`);
 
-    // Intentional response delay: background trails the foreground glow
-    delayedLowTarget  += (lowTarget  - delayedLowTarget)  * CONFIG.BG_DELAY_SMOOTH;
-    delayedMidTarget  += (midTarget  - delayedMidTarget)  * (CONFIG.BG_DELAY_SMOOTH * 1.15);
-    delayedHighTarget += (highTarget - delayedHighTarget) * (CONFIG.BG_DELAY_SMOOTH * 0.9);
-
-    // Slow baseline breathing independent of FFT
-    const baselineZoom =
-      1 +
-      CONFIG.BG_BASELINE_ZOOM * (
-        0.5 +
-        0.5 * Math.sin(t * 0.16)
-      );
-
-    // Tiny high-band variation, smoothed enough to avoid visual noise
-    microValue += (delayedHighTarget - microValue) * CONFIG.BG_MICRO_SMOOTH;
-
-    // Map FFT → zoom/blur
-    // Zoom is bass-led and extremely restrained
-    const zoomTarget =
-      baselineZoom +
-      (delayedLowTarget * CONFIG.BG_ZOOM_MAX_ADD) +
-      (microValue * 0.0015);
-
-    // Blur always keeps a small base amount; mids add subtle modulation
-    const blurTarget =
-      CONFIG.BG_BASE_BLUR +
-      (delayedMidTarget * CONFIG.BG_BLUR_MAX_ADD) +
-      (microValue * 0.06);
-
-    // Inertia smoothing:
-    // value += (target - value) * smoothingFactor
-    // Zoom is slower than blur so it feels deeper / heavier.
-    zoomValue += (zoomTarget - zoomValue) * CONFIG.BG_ZOOM_SMOOTH;
-    blurValue += (blurTarget - blurValue) * CONFIG.BG_BLUR_SMOOTH;
-
-    root.style.setProperty('--bg-dyn-scale', zoomValue.toFixed(5));
-    root.style.setProperty('--bg-dyn-blur',  `${blurValue.toFixed(3)}px`);
+    visCtx.beginPath();
+    visCtx.strokeStyle = grad;
+    visCtx.moveTo(pos.x, pos.y);
+    visCtx.lineTo(endX, endY);
+    visCtx.stroke();
   }
+}
 
-  function connect() {
-    const ws = new WebSocket(`ws://localhost:${CONFIG.SPECTRUM_PORT}`);
+// ── (#2) Single rAF loop ────────────────────────────────────────
+function animationLoop() {
+  rafId = requestAnimationFrame(animationLoop);
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        regroup(data);
-      } catch (_) {}
-    };
+  const t = performance.now() * 0.001;
 
-    ws.onclose = () => setTimeout(connect, 3000);
-    ws.onerror = () => {};
+  // Background motion (uses its own config/state/smoothing)
+  bgAnimate(t);
+
+  // Visualizer canvas draw
+  if (CONFIG.VISUALIZER) visDraw();
+}
+
+// (#8) Start/stop helpers
+function startAnimationLoop() {
+  if (rafId === null) {
+    rafId = requestAnimationFrame(animationLoop);
   }
+}
 
-  // Initialize subtle baseline state immediately
-  root.style.setProperty('--bg-dyn-scale', '1');
-  root.style.setProperty('--bg-dyn-blur', `${CONFIG.BG_BASE_BLUR.toFixed(3)}px`);
+// ── (#3) Shared WebSocket connection ────────────────────────────
+function connectSpectrum() {
+  if (!CONFIG.VISUALIZER && !bgEnabled) return;
 
-  animate();
-  connect();
+  const ws = new WebSocket(`ws://localhost:${CONFIG.SPECTRUM_PORT}`);
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (!Array.isArray(data)) return;
+
+      // Feed visualizer (44 bands, own gain)
+      if (CONFIG.VISUALIZER) {
+        for (let i = 0; i < VIS_BANDS; i++) {
+          const idx = Math.floor(i * data.length / VIS_BANDS);
+          visRaw[i] = Math.min(1, (data[idx] || 0) * visGain);
+        }
+      }
+
+      // Feed background motion (6 broad bands, own regroup/shaping)
+      bgRegroup(data);
+    } catch (_) {}
+  };
+
+  ws.onclose = () => setTimeout(connectSpectrum, 3000);
+  ws.onerror = () => {};
 }
 
 // ── Fetch ───────────────────────────────────────────────────────
@@ -480,7 +638,7 @@ async function fetchNowPlaying() {
     const res  = await fetch(CONFIG.ENDPOINT, { cache: 'no-store' });
     const data = await res.json();
     const item = data?.player?.activeItem;
-    if (!item || item.index < 0) { card.classList.remove('visible'); return; }
+    if (!item || item.index < 0) { hideCard(); return; }
     const volDb  = data?.player?.volume?.value ?? null;
     updateUI({
       artist:   item.columns?.[0] || '—',
@@ -489,152 +647,23 @@ async function fetchNowPlaying() {
       duration: parseFloat(item.duration) || 0,
       volume:   volDb,
     });
-  } catch (_) { card.classList.remove('visible'); }
+  } catch (_) { hideCard(); }
 }
 
 fetchNowPlaying();
 setInterval(fetchNowPlaying, CONFIG.POLL_MS);
 
-// ── Visualizer via spectrum-server.py ──────────────────────────
-function initVisualizer() {
-  if (!CONFIG.VISUALIZER) return;
+// ── Initialize bg-img baseline (#7) ─────────────────────────────
+// Set initial transform/filter directly so images don't start unstyled
+const initTransform = `scale(${bgBaseScale})`;
+const initFilter    = `blur(${bgBaseBlur + CONFIG.BG_BASE_BLUR}px)`;
+bgA.style.transform = initTransform;
+bgA.style.filter    = initFilter;
+bgB.style.transform = initTransform;
+bgB.style.filter    = initFilter;
 
-  const canvas = document.getElementById('vis-canvas');
-  const ctx    = canvas.getContext('2d');
-  const BANDS  = CONFIG.VIS_BANDS;
-
-  // Real FFT band levels received from spectrum-server.py
-  // Smoothed client-side for snappy attack / gentle decay
-  const bands = new Array(BANDS).fill(0);
-  window._rawBands = new Array(BANDS).fill(0);
-  const rawBands = window._rawBands;  // reference so WebSocket handler still works
-
-  // ── Size canvas to match card ─────────────────────────────────
-  function resize() {
-    const wrap = document.getElementById('card-wrap');
-    canvas.width  = wrap.offsetWidth;
-    canvas.height = wrap.offsetHeight;
-  }
-  resize();
-  window.addEventListener('resize', resize);
-
-  // ── Draw one frame ────────────────────────────────────────────
-  function draw() {
-    requestAnimationFrame(draw);
-
-    const W = canvas.width;
-    const H = canvas.height;
-    const R = parseFloat(getComputedStyle(document.documentElement)
-                .getPropertyValue('--card-radius')) || 20;
-    const depth = CONFIG.VIS_BAR_DEPTH;
-
-    ctx.clearRect(0, 0, W, H);
-    ctx.filter = `blur(${CONFIG.VIS_BLUR}px)`;
-
-    // Smooth bands — snappy attack, gentle decay
-    for (let i = 0; i < BANDS; i++) {
-      const target = rawBands[i] || 0;
-      const rate   = target > bands[i]
-        ? CONFIG.VIS_SMOOTHING * 4
-        : CONFIG.VIS_SMOOTHING;
-      bands[i] += (target - bands[i]) * rate;
-    }
-
-    const straightW = W - 2 * R;
-    const straightH = H - 2 * R;
-    const perimeter = 2 * straightW + 2 * straightH + Math.PI * 2 * R;
-    const bandStep  = perimeter / BANDS;
-    const [cr, cg, cb] = CONFIG.VIS_COLOR.split(',').map(s => s.trim());
-
-    for (let i = 0; i < BANDS; i++) {
-      if (bands[i] < 0.005) continue;
-
-      const dist = i * bandStep + bandStep * 0.5;
-      let   x, y, nx, ny;
-
-      if (dist < straightW) {
-        x = R + dist; y = 0; nx = 0; ny = 1;
-      } else if (dist < straightW + Math.PI * 0.5 * R) {
-        const a = (dist - straightW) / R;
-        x = W - R + Math.sin(a) * R; y = R - Math.cos(a) * R;
-        nx = -Math.sin(a); ny = -Math.cos(a);
-      } else if (dist < straightW + Math.PI * 0.5 * R + straightH) {
-        const d = dist - straightW - Math.PI * 0.5 * R;
-        x = W; y = R + d; nx = -1; ny = 0;
-      } else if (dist < straightW + Math.PI * R + straightH) {
-        const a = (dist - straightW - Math.PI * 0.5 * R - straightH) / R;
-        x = W - R + Math.cos(a) * R; y = H - R + Math.sin(a) * R;
-        nx = -Math.cos(a); ny = -Math.sin(a);
-      } else if (dist < 2 * straightW + Math.PI * R + straightH) {
-        const d = dist - straightW - Math.PI * R - straightH;
-        x = W - R - d; y = H; nx = 0; ny = -1;
-      } else if (dist < 2 * straightW + Math.PI * 1.5 * R + straightH) {
-        const a = (dist - 2 * straightW - Math.PI * R - straightH) / R;
-        x = R - Math.sin(a) * R; y = H - R + Math.cos(a) * R;
-        nx = Math.sin(a); ny = -Math.cos(a);
-      } else if (dist < 2 * straightW + Math.PI * 1.5 * R + 2 * straightH) {
-        const d = dist - 2 * straightW - Math.PI * 1.5 * R - straightH;
-        x = 0; y = H - R - d; nx = 1; ny = 0;
-      } else {
-        const a = (dist - 2 * straightW - Math.PI * 1.5 * R - 2 * straightH) / R;
-        x = R - Math.cos(a) * R; y = R - Math.sin(a) * R;
-        nx = Math.cos(a); ny = Math.sin(a);
-      }
-
-      const barH  = bands[i] * depth;
-      const alpha = bands[i] * CONFIG.VIS_MAX_OPACITY;
-      const barW  = Math.max(3, bandStep * 1.2);
-
-      const grad = ctx.createLinearGradient(x, y, x + nx * barH, y + ny * barH);
-      grad.addColorStop(0,   `rgba(${cr},${cg},${cb},${alpha.toFixed(3)})`);
-      grad.addColorStop(0.4, `rgba(${cr},${cg},${cb},${(alpha * 0.6).toFixed(3)})`);
-      grad.addColorStop(1,   `rgba(${cr},${cg},${cb},0)`);
-
-      ctx.beginPath();
-      ctx.strokeStyle = grad;
-      ctx.lineWidth   = barW;
-      ctx.lineCap     = 'round';
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + nx * barH, y + ny * barH);
-      ctx.stroke();
-    }
-
-    ctx.filter = 'none';
-  }
-
-  draw();
-
-  // ── Connect to spectrum-server.py ────────────────────────────
-  function connect() {
-    const ws = new WebSocket(`ws://localhost:${CONFIG.SPECTRUM_PORT}`);
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (Array.isArray(data)) {
-          const src = data;
-          for (let i = 0; i < BANDS; i++) {
-            const idx = Math.floor(i * src.length / BANDS);
-            // Apply dynamic gain based on foobar volume (abs dB = gain)
-            rawBands[i] = Math.min(1, (src[idx] || 0) * visGain);
-          }
-        }
-      } catch (_) {}
-    };
-
-    ws.onclose = () => {
-      // Fade out bands then reconnect
-      setTimeout(connect, 3000);
-    };
-
-    ws.onerror = () => {};
-  }
-
-  connect();
-}
-
-initBackgroundMotion();
-initVisualizer();
+// ── Start spectrum connection ───────────────────────────────────
+connectSpectrum();
 </script>
 </body>
 </html>
