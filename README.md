@@ -2,7 +2,7 @@
 
 A clean, minimal OBS browser source overlay that shows your currently playing track in foobar2000. Displays artist, track title, and a play timer inside a frosted-glass card with a real-time audio spectrum visualizer on the border. Optionally crossfades through a folder of background images on every track change.
 
-[![Watch the demo](preview.png)](https://youtu.be/YbRZDitaOi4)
+[![Watch the demo](preview.png)](https://youtu.be/GIjEJSzIUnQ)
 
 ---
 
