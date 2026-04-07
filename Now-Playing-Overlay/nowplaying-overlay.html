@@ -246,6 +246,12 @@ const CONFIG = {
   BG_BLUR_SMOOTH: 0.032,       // slightly faster inertia for blur
   BG_DELAY_SMOOTH: 0.020,      // intentional lag vs foreground glow
   BG_MICRO_SMOOTH: 0.045,      // heavily smoothed high-band micro motion
+
+  // ── RENDER RATE CAP ──────────────────────────────────────────
+  // Caps how often the canvas is redrawn and bg motion is updated.
+  // Server sends FFT data at 30 FPS, so anything above 30 just
+  // re-renders the same data. Lower = less CPU. Set to 0 for uncapped.
+  RENDER_FPS: 30,
 };
 
 // ── Elements ───────────────────────────────────────────────────
@@ -585,10 +591,20 @@ function visDraw() {
 }
 
 // ── (#2) Single rAF loop ────────────────────────────────────────
+// Frame interval for the render rate cap. 0 = uncapped (run at browser rAF rate).
+const FRAME_INTERVAL_MS = CONFIG.RENDER_FPS > 0 ? 1000 / CONFIG.RENDER_FPS : 0;
+let   lastFrameTime     = 0;
+
 function animationLoop() {
   rafId = requestAnimationFrame(animationLoop);
 
-  const t = performance.now() * 0.001;
+  const now = performance.now();
+  // Gate: skip work if not enough time has elapsed since last render.
+  // The 0.5ms epsilon prevents missing frames due to rAF/vsync alignment.
+  if (FRAME_INTERVAL_MS > 0 && (now - lastFrameTime) < (FRAME_INTERVAL_MS - 0.5)) return;
+  lastFrameTime = now;
+
+  const t = now * 0.001;
 
   // Background motion (uses its own config/state/smoothing)
   bgAnimate(t);
@@ -600,6 +616,7 @@ function animationLoop() {
 // (#8) Start/stop helpers
 function startAnimationLoop() {
   if (rafId === null) {
+    lastFrameTime = 0;  // ensure first frame after restart renders immediately
     rafId = requestAnimationFrame(animationLoop);
   }
 }
