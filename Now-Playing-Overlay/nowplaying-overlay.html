@@ -56,8 +56,8 @@
     pointer-events: none;
     z-index: 10;
     border-radius: var(--card-radius);
-    /* (#1) GPU-composited blur instead of per-stroke ctx.filter */
-    filter: blur(var(--vis-blur, 12px));
+    /* (#1) GPU-composited blur + brightness instead of per-stroke ctx.filter */
+    filter: var(--vis-filter, blur(12px) brightness(1.6));
   }
 
   .card {
@@ -229,6 +229,7 @@ const CONFIG = {
   VIS_MAX_OPACITY:   0.83,
   VIS_BAR_DEPTH:     22,
   VIS_BLUR:          12,
+  VIS_BRIGHTNESS:    1.5,     // post-blur brightness multiplier — restores glow intensity lost to CSS blur spread (1.0 = none, 1.6 ≈ original ctx.filter look)
   VIS_SMOOTHING:     0.25,
   VIS_BANDS:         44,
   
@@ -239,9 +240,9 @@ const CONFIG = {
   BG_MOTION: true,
   BG_MOTION_BANDS: 6,          // group server FFT into 6 broad bands
   BG_BASE_BLUR: 0.10,          // extra blur always present on top of --img-blur
-  BG_BLUR_MAX_ADD: 0.71,       // FFT blur modulation stays very small
-  BG_ZOOM_MAX_ADD: 0.18,      // ~1.8% max extra zoom from FFT
-  BG_BASELINE_ZOOM: 0.015,    // slow continuous "breathing"
+  BG_BLUR_MAX_ADD: 0.83,       // FFT blur modulation stays very small
+  BG_ZOOM_MAX_ADD: 0.40,      // ~1.8% max extra zoom from FFT
+  BG_BASELINE_ZOOM: 0.025,    // slow continuous "breathing"
   BG_ZOOM_SMOOTH: 0.032,       // slow inertia for cinematic zoom
   BG_BLUR_SMOOTH: 0.032,       // slightly faster inertia for blur
   BG_DELAY_SMOOTH: 0.020,      // intentional lag vs foreground glow
@@ -269,8 +270,11 @@ const trackClip = document.getElementById('track-clip');
 let imgQueue = [], allImages = [], activeLayer = 'a', lastTitle = '';
 let visGain  = 1.0;  // dynamic gain multiplier derived from foobar volume
 
-// (#1) Apply VIS_BLUR as a CSS variable for GPU-composited canvas blur
-document.getElementById('vis-canvas').style.setProperty('--vis-blur', CONFIG.VIS_BLUR + 'px');
+// (#1) Apply VIS_BLUR + VIS_BRIGHTNESS as a chained CSS filter (GPU-composited)
+document.getElementById('vis-canvas').style.setProperty(
+  '--vis-filter',
+  `blur(${CONFIG.VIS_BLUR}px) brightness(${CONFIG.VIS_BRIGHTNESS})`
+);
 
 // (#4) Cache card radius — never changes at runtime
 const cachedCardRadius = parseFloat(getComputedStyle(document.documentElement)
