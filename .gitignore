@@ -1,3 +1,5 @@
 waveform-mask.png
 frames_tmp/
 *.lnk
+*.bak
+/nppBackup
