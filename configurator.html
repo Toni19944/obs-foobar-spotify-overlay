@@ -1,0 +1,3711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Now Playing Overlay — Configurator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Syne:wght@500;600&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  /* ════════════════════════════════════════════════════════════════
+     "Meter Bridge" — a calibrated mastering-console panel.
+     This chrome styles the CONFIGURATOR's own UI only. None of these
+     variables are ever emitted into the generated overlay output
+     (the overlay carries its own :root inside generateHTML's template).
+     ════════════════════════════════════════════════════════════════ */
+  :root {
+    --panel:     #15171B;   /* graphite chassis */
+    --rail:      #23262D;   /* brushed-aluminum rail / group dividers */
+    --engrave:   #8A9099;   /* engraved label text */
+    --readout:   #E7EAEE;   /* illuminated numeric readouts */
+    --armed:     #E8B04B;   /* VU-amber — the single signature accent (armed control) */
+    --sync-led:  #5BD6A0;   /* green LED — control matches the overlay default */
+
+    /* Back-compat aliases: existing rules inherit the new palette via the cascade */
+    --bg:        var(--panel);
+    --surface:   #1b1e24;
+    --surface2:  var(--rail);
+    --border:    rgba(255,255,255,0.06);
+    --border2:   rgba(255,255,255,0.12);
+    --text:      var(--readout);
+    --muted:     var(--engrave);
+    --accent:    var(--armed);
+    --accent-dim:rgba(232,176,75,0.15);
+    --success:   var(--sync-led);
+    --radius:    10px;
+    --font-display: 'Oswald', 'Syne', sans-serif;   /* condensed industrial headers */
+    --font-mono:    ui-monospace, 'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── HEADER ──────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 0.5px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .logo {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--readout);
+  }
+
+  .logo span { color: var(--armed); }
+
+  header {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.25)),
+      var(--panel);
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 10px;
+  }
+
+  .btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: 0.5px solid var(--border2);
+    background: var(--surface2);
+    color: var(--text);
+  }
+
+  .btn:hover { background: var(--surface); border-color: rgba(255,255,255,0.2); }
+  .btn:active { transform: scale(0.97); }
+
+  .btn.primary {
+    background: var(--armed);
+    border-color: var(--armed);
+    color: var(--panel);                 /* dark text — illuminated push-button */
+    font-weight: 600;
+    box-shadow: 0 0 10px rgba(232,176,75,0.25);
+  }
+
+  .btn.primary:hover { background: #f0bd5e; border-color: #f0bd5e; }
+
+  /* ── Accessibility floor (built in, not announced) ─────────────── */
+  .btn:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  .toggle input:focus-visible + .toggle-track {
+    outline: 2px solid var(--armed);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+
+  .btn.success {
+    background: var(--success) !important;
+    border-color: var(--success) !important;
+    color: #0c0c10 !important;
+  }
+
+  /* ── LAYOUT ──────────────────────────────────────────────── */
+  .layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── SIDEBAR ─────────────────────────────────────────────── */
+  .sidebar {
+    border-right: 0.5px solid var(--border);
+    overflow-y: auto;
+    padding: 20px 0;
+  }
+
+  .sidebar::-webkit-scrollbar { width: 4px; }
+  .sidebar::-webkit-scrollbar-track { background: transparent; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .section {
+    padding: 0 20px 20px;
+    border-bottom: 0.5px solid var(--border);
+    margin-bottom: 4px;
+  }
+
+  .section:last-child { border-bottom: none; }
+
+  .section-title {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--engrave);
+    margin-bottom: 14px;
+    padding-top: 20px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.6);   /* engraved */
+  }
+
+  /* ── Signature element: per-group sync LED ──────────────────────
+     Green when every control in the group matches the overlay's
+     current default (DEFAULTS); amber when any control is "armed"
+     (deviates). Encodes the feature itself — drift from the
+     known-good baseline is visible at a glance. */
+  .sync-led {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--sync-led);
+    box-shadow: 0 0 5px var(--sync-led), 0 0 1px #000 inset;
+    transition: background 0.25s ease, box-shadow 0.25s ease;
+  }
+  .sync-led.armed {
+    background: var(--armed);
+    box-shadow: 0 0 6px var(--armed), 0 0 1px #000 inset;
+  }
+
+  .field {
+    margin-bottom: 14px;
+  }
+
+  .field:last-child { margin-bottom: 0; }
+
+  .field-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.65);
+  }
+
+  .field-value {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--armed);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+
+  /* Range slider */
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 3px;
+    background: var(--border2);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    transition: transform 0.1s ease;
+  }
+
+  input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+  /* Color picker */
+  .color-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  input[type=color] {
+    -webkit-appearance: none;
+    width: 32px;
+    height: 32px;
+    border: 0.5px solid var(--border2);
+    border-radius: 6px;
+    background: none;
+    cursor: pointer;
+    padding: 2px;
+    flex-shrink: 0;
+  }
+
+  input[type=color]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 4px; }
+  input[type=color]::-webkit-color-swatch { border: none; border-radius: 4px; }
+
+  .opacity-slider { flex: 1; }
+
+  /* Toggle */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+  }
+
+  .toggle-label { font-size: 13px; color: rgba(255,255,255,0.65); }
+
+  .toggle {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .toggle input { opacity: 0; width: 0; height: 0; }
+
+  .toggle-track {
+    position: absolute;
+    inset: 0;
+    background: var(--border2);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+  }
+
+  .toggle-track::after {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.5);
+    transition: transform 0.2s ease, background 0.2s ease;
+  }
+
+  .toggle input:checked + .toggle-track { background: var(--accent); }
+  .toggle input:checked + .toggle-track::after {
+    transform: translateX(16px);
+    background: #fff;
+  }
+
+  /* Number input */
+  input[type=number], input[type=text] {
+    width: 100%;
+    background: var(--surface2);
+    border: 0.5px solid var(--border2);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    padding: 7px 10px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  input[type=number]:focus, input[type=text]:focus { border-color: var(--accent); }
+
+  /* ── PREVIEW PANE ────────────────────────────────────────── */
+  .preview-pane {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .preview-header {
+    padding: 10px 24px;
+    border-bottom: 0.5px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .preview-header-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .preview-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .preview-label {
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 500;
+    width: 46px;
+    flex-shrink: 0;
+  }
+
+  .preview-title {
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  .bg-swatches {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .bg-swatch {
+    position: relative;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1.5px solid transparent;
+    transition: border-color 0.15s;
+    flex-shrink: 0;
+  }
+
+  .bg-swatch.active { border-color: var(--accent); }
+
+  .preview-canvas {
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 32px;
+    position: relative;
+    overflow: hidden;
+    transition: background 0.3s ease;
+  }
+
+  /* Scope graticule — faint measurement grid behind the preview card */
+  .preview-canvas::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+    background-size: 32px 32px;
+    -webkit-mask-image: radial-gradient(ellipse at center, #000 55%, transparent 100%);
+    mask-image: radial-gradient(ellipse at center, #000 55%, transparent 100%);
+  }
+  .preview-canvas > * { position: relative; z-index: 1; }
+
+  /* ── MOCK CARD ───────────────────────────────────────────── */
+  #mock-wrap {
+    position: relative;
+  }
+
+  #mock-vis-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+    border-radius: 20px; /* updated dynamically */
+  }
+
+  #mock-card {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  #mock-bg-a, #mock-bg-b {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+
+  #mock-bg-a.active, #mock-bg-b.active {
+    opacity: var(--mock-img-opacity, 0.22);
+  }
+
+  .mock-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .mock-marquee-clip {
+    overflow: hidden;
+    width: 100%;
+  }
+
+  .mock-marquee-clip.scrolling {
+    overflow: hidden;
+  }
+
+  .mock-artist {
+    font-family: 'Syne', sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    display: inline-block;
+  }
+
+  @keyframes mock-marquee {
+    0%   { transform: translateX(0); }
+    10%  { transform: translateX(0); }
+    45%  { transform: translateX(var(--marquee-offset, 0px)); }
+    55%  { transform: translateX(var(--marquee-offset, 0px)); }
+    90%  { transform: translateX(0); }
+    100% { transform: translateX(0); }
+  }
+
+  .mock-marquee-clip.scrolling .mock-artist,
+  .mock-marquee-clip.scrolling .mock-track {
+    animation: mock-marquee var(--mock-marquee-speed, 22s) ease-in-out infinite;
+  }
+
+  .mock-middle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .mock-bar-bg {
+    flex: 1;
+    height: 2px;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-left: auto;
+  }
+
+  .mock-bar-fill {
+    height: 100%;
+    width: 46%;
+    border-radius: 2px;
+  }
+
+  .mock-timer {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 11px;
+    font-weight: 300;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .mock-track {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 16px;
+    font-weight: 500;
+    white-space: nowrap;
+    display: inline-block;
+  }
+
+  /* ── OUTPUT ──────────────────────────────────────────────── */
+  .output-panel {
+    border-top: 0.5px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+
+  .output-tabs {
+    display: flex;
+    border-bottom: 0.5px solid var(--border);
+  }
+
+  .output-tab {
+    padding: 10px 18px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    user-select: none;
+  }
+
+  .output-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .output-body {
+    position: relative;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+
+  .output-body::-webkit-scrollbar { width: 4px; }
+  .output-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  pre {
+    padding: 14px 18px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: rgba(255,255,255,0.7);
+    white-space: pre;
+  }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .kw  { color: #c792ea; }
+  .str { color: #c3e88d; }
+  .num { color: #f78c6c; }
+  .cm  { color: #546e7a; }
+  .prop{ color: #82aaff; }
+
+  /* ── PROFILES ────────────────────────────────────────────── */
+  .profile-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .profile-row input[type=text] {
+    flex: 1;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .profile-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .profile-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    background: var(--surface2);
+    border: 0.5px solid var(--border2);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .profile-item:hover { border-color: rgba(255,255,255,0.2); }
+  .profile-item.active-profile { border-color: var(--accent); }
+
+  .profile-name {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .profile-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    transition: color 0.15s;
+    flex-shrink: 0;
+  }
+
+  .profile-btn:hover { color: var(--text); }
+  .profile-btn.del:hover { color: #f87171; }
+
+  .mode-btn {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .mode-btn.active {
+    background: var(--accent);
+    color: #fff;
+  }
+  .mode-btn:hover:not(.active) {
+    color: var(--text);
+  }
+
+  .autosave-note {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .autosave-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--success);
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">now playing <span>configurator</span></div>
+  <div class="header-actions">
+    <div style="display:flex;align-items:center;gap:8px;margin-right:8px;padding-right:12px;border-right:0.5px solid rgba(255,255,255,0.1);">
+      <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Mode</span>
+      <div style="display:flex;border:0.5px solid rgba(255,255,255,0.15);border-radius:6px;overflow:hidden;">
+        <button id="mode-foobar" class="mode-btn active" onclick="setMode('foobar')">foobar2000</button>
+        <button id="mode-spotify" class="mode-btn" onclick="setMode('spotify')">Spotify</button>
+      </div>
+    </div>
+    <button class="btn" id="btn-pull">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Pull from file
+    </button>
+    <input type="file" id="pull-file-input" accept=".html" style="display:none">
+    <button class="btn" id="btn-copy">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      Copy CSS
+    </button>
+    <button class="btn" id="btn-copy-html">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      Copy HTML
+    </button>
+    <button class="btn primary" id="btn-save">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Save file
+    </button>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ── SIDEBAR ─────────────────────────────────────────── -->
+  <aside class="sidebar">
+
+    <div class="section">
+      <div class="section-title">Profiles</div>
+
+      <div class="profile-row">
+        <input type="text" id="profile-name-input" placeholder="Profile name…" maxlength="32">
+        <button class="btn" id="btn-save-profile" style="padding:7px 12px; font-size:12px;">Save</button>
+      </div>
+
+      <div class="profile-list" id="profile-list"></div>
+
+      <div class="autosave-note">
+        <div class="autosave-dot"></div>
+        Settings auto-saved between sessions
+      </div>
+
+      <div style="margin-top:10px;">
+        <button class="btn" id="btn-reset-defaults" style="width:100%; font-size:12px; color:rgba(255,255,255,0.45);">
+          Reset to defaults
+        </button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Card</div>
+
+      <div class="field">
+        <div class="field-label">Width <span class="field-value" id="val-width">340px</span></div>
+        <input type="range" id="card-width" min="240" max="560" value="340" step="2">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Height <span class="field-value" id="val-height">auto</span></div>
+        <input type="range" id="card-height" min="0" max="300" value="0" step="2">
+        <div style="font-size:11px;color:var(--muted);margin-top:3px;">0 = auto (fits content)</div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">Corner radius <span class="field-value" id="val-radius">20px</span></div>
+        <input type="range" id="card-radius" min="0" max="60" value="20" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Backdrop blur <span class="field-value" id="val-blur">22px</span></div>
+        <input type="range" id="card-blur" min="0" max="60" value="22" step="1">
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Card glass (backdrop blur)</span>
+        <label class="toggle">
+          <input type="checkbox" id="card-glass">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <div class="field">
+        <div class="field-label">Padding horizontal <span class="field-value" id="val-px">28px</span></div>
+        <input type="range" id="card-px" min="8" max="60" value="28" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Padding vertical <span class="field-value" id="val-py">18px</span></div>
+        <input type="range" id="card-py" min="6" max="40" value="18" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Background opacity <span class="field-value" id="val-bg-op">97%</span></div>
+        <input type="range" id="card-bg-op" min="0" max="100" value="97" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Border opacity <span class="field-value" id="val-border-op">13%</span></div>
+        <input type="range" id="card-border-op" min="0" max="60" value="13" step="1">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Background image</div>
+
+      <div class="field">
+        <div class="field-label">Image opacity <span class="field-value" id="val-img-op">24%</span></div>
+        <input type="range" id="img-op" min="0" max="60" value="24" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Image blur <span class="field-value" id="val-img-blur">2px</span></div>
+        <input type="range" id="img-blur" min="0" max="20" value="2" step="1">
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Enable background images</span>
+        <label class="toggle">
+          <input type="checkbox" id="images-enabled" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Background FFT motion</span>
+        <label class="toggle">
+          <input type="checkbox" id="bg-motion">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <!-- Spotify mode only -->
+      <div id="spotify-album-row" class="toggle-row" style="display:none;">
+        <span class="toggle-label">Album art as background</span>
+        <label class="toggle">
+          <input type="checkbox" id="album-art-enabled" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <div id="spotify-images-row" class="toggle-row" style="display:none;">
+        <span class="toggle-label">bg/ folder images</span>
+        <label class="toggle">
+          <input type="checkbox" id="spotify-images-enabled">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Spotify VIS_GAIN — only shown in Spotify mode -->
+    <div id="spotify-gain-section" class="section" style="display:none;">
+      <div class="section-title">Visualizer gain</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Fixed gain — Spotify API does not expose playback volume.</div>
+      <div class="field">
+        <div class="field-label">VIS_GAIN <span class="field-value" id="val-vis-gain">1.0</span></div>
+        <input type="range" id="vis-gain" min="0.1" max="5" value="1.0" step="0.1">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Text</div>
+
+      <div class="field">
+        <div class="field-label">Track opacity <span class="field-value" id="val-track-op">69%</span></div>
+        <input type="range" id="track-op" min="20" max="100" value="92" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Artist opacity <span class="field-value" id="val-artist-op">58%</span></div>
+        <input type="range" id="artist-op" min="10" max="100" value="42" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Timer opacity <span class="field-value" id="val-timer-op">45%</span></div>
+        <input type="range" id="timer-op" min="10" max="100" value="35" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Track shadow blur <span class="field-value" id="val-track-sh">6px</span></div>
+        <input type="range" id="track-shadow" min="0" max="20" value="6" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Track shadow opacity <span class="field-value" id="val-track-sh-op">70%</span></div>
+        <input type="range" id="track-shadow-op" min="0" max="100" value="70" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Artist/timer shadow blur <span class="field-value" id="val-artist-sh">4px</span></div>
+        <input type="range" id="artist-shadow" min="0" max="20" value="4" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Artist/timer shadow opacity <span class="field-value" id="val-artist-sh-op">60%</span></div>
+        <input type="range" id="artist-shadow-op" min="0" max="100" value="60" step="1">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Progress bar</div>
+
+      <div class="field">
+        <div class="field-label">Fill opacity <span class="field-value" id="val-bar-fill-op">50%</span></div>
+        <input type="range" id="bar-fill-op" min="10" max="100" value="50" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Track opacity <span class="field-value" id="val-bar-bg-op">10%</span></div>
+        <input type="range" id="bar-bg-op" min="0" max="40" value="10" step="1">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Marquee</div>
+
+      <div class="field">
+        <div class="field-label">Scroll speed <span class="field-value" id="val-marquee">22s</span></div>
+        <input type="range" id="marquee-speed" min="6" max="60" value="22" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Left fade <span class="field-value" id="val-fade-left">1%</span></div>
+        <input type="range" id="fade-left" min="0" max="15" value="1" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Right fade <span class="field-value" id="val-fade-right">1%</span></div>
+        <input type="range" id="fade-right" min="0" max="15" value="1" step="1">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Polling</div>
+      <div class="field">
+        <div class="field-label">Poll interval (ms)</div>
+        <input type="number" id="poll-ms" value="1000" min="250" max="5000" step="250">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Visualizer</div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Enable visualizer</span>
+        <label class="toggle">
+          <input type="checkbox" id="vis-enabled" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <div class="field">
+        <div class="field-label">Bar depth <span class="field-value" id="val-vis-depth">22px</span></div>
+        <input type="range" id="vis-depth" min="4" max="40" value="22" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Blur <span class="field-value" id="val-vis-blur">12px</span></div>
+        <input type="range" id="vis-blur" min="0" max="20" value="12" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Brightness <span class="field-value" id="val-vis-brightness">1.8</span></div>
+        <input type="range" id="vis-brightness" min="1" max="3" value="1.8" step="0.1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Peak opacity <span class="field-value" id="val-vis-opacity">93%</span></div>
+        <input type="range" id="vis-opacity" min="10" max="100" value="93" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Bands <span class="field-value" id="val-vis-bands">44</span></div>
+        <input type="range" id="vis-bands" min="20" max="120" value="44" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Smoothing <span class="field-value" id="val-vis-smoothing">25%</span></div>
+        <input type="range" id="vis-smoothing" min="2" max="60" value="25" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Render cap (FPS) <span class="field-value" id="val-render-fps">24</span></div>
+        <input type="range" id="render-fps" min="0" max="60" value="24" step="1">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Shadow spread</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Adds a second stacked shadow for a glow/thicken effect</div>
+
+      <div class="field">
+        <div class="field-label">Track spread blur <span class="field-value" id="val-track-spread">0px</span></div>
+        <input type="range" id="track-spread" min="0" max="16" value="0" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Track spread opacity <span class="field-value" id="val-track-spread-op">90%</span></div>
+        <input type="range" id="track-spread-op" min="0" max="100" value="90" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Artist spread blur <span class="field-value" id="val-artist-spread">0px</span></div>
+        <input type="range" id="artist-spread" min="0" max="16" value="0" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Artist spread opacity <span class="field-value" id="val-artist-spread-op">90%</span></div>
+        <input type="range" id="artist-spread-op" min="0" max="100" value="90" step="1">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Spectrum server</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Settings for spectrum-server.py — use <b>Save spectrum config</b> to download a pre-configured copy.<br><br>⚠️ These values do not affect the live preview — the preview reflects whatever the currently running spectrum-server.py is configured with.</div>
+
+      <div class="field">
+        <div class="field-label">Device name</div>
+        <input type="text" id="spec-device" value="Line 1" placeholder="Partial device name…">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Port <span class="field-value" id="val-spec-port">9001</span></div>
+        <input type="range" id="spec-port-range" min="1024" max="65535" value="9001" step="1">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Bands <span class="field-value" id="val-spec-bands">64</span></div>
+        <input type="range" id="spec-bands" min="16" max="128" value="64" step="4">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Chunk size <span class="field-value" id="val-spec-chunk">1024</span></div>
+        <input type="range" id="spec-chunk" min="256" max="4096" value="1024" step="256">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Smoothing <span class="field-value" id="val-spec-smoothing">50%</span></div>
+        <input type="range" id="spec-smoothing" min="0" max="95" value="50" step="5">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Gain <span class="field-value" id="val-spec-gain">8.0</span></div>
+        <input type="range" id="spec-gain" min="1" max="30" value="8" step="0.5">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Freq min <span class="field-value" id="val-spec-fmin">40 Hz</span></div>
+        <input type="range" id="spec-fmin" min="20" max="500" value="40" step="10">
+      </div>
+
+      <div class="field">
+        <div class="field-label">Freq max <span class="field-value" id="val-spec-fmax">16000 Hz</span></div>
+        <input type="range" id="spec-fmax" min="4000" max="22000" value="16000" step="500">
+      </div>
+
+      <button class="btn success" id="btn-save-spec" style="width:100%;margin-top:4px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Save spectrum config
+      </button>
+    </div>
+
+  </aside>
+
+  <!-- ── PREVIEW + OUTPUT ──────────────────────────────────── -->
+  <div class="preview-pane">
+
+    <div class="preview-header">
+      <div class="preview-header-inner">
+        <div class="preview-row">
+          <span class="preview-label">Canvas</span>
+          <div class="bg-swatches" id="canvas-swatches">
+            <div class="bg-swatch canvas-swatch active" data-bg="#0c0c10" style="background:#0c0c10; border:1px solid rgba(255,255,255,0.15);" title="Dark"></div>
+            <div class="bg-swatch canvas-swatch" data-bg="#1a1035" style="background:#1a1035;" title="Purple"></div>
+            <div class="bg-swatch canvas-swatch" data-bg="#0d1f2d" style="background:#0d1f2d;" title="Navy"></div>
+            <div class="bg-swatch canvas-swatch" data-bg="#1a0d0d" style="background:#1a0d0d;" title="Red"></div>
+            <div class="bg-swatch canvas-swatch" data-bg="#6b7280" style="background:#6b7280;" title="Grey (game capture)"></div>
+            <div class="bg-swatch canvas-swatch" data-bg="repeating-conic-gradient(#444 0% 25%, #222 0% 50%) 0 0 / 12px 12px" style="background:repeating-conic-gradient(#444 0% 25%, #222 0% 50%) 0 0 / 12px 12px;" title="Checkerboard (opacity test)"></div>
+          </div>
+        </div>
+        <div class="preview-row">
+          <span class="preview-label">Card bg</span>
+          <div class="bg-swatches" id="card-swatches">
+            <div class="bg-swatch card-swatch active" data-img="" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);" title="None">
+              <svg width="10" height="10" viewBox="0 0 10 10" style="position:absolute;inset:0;margin:auto;opacity:0.5"><line x1="1" y1="1" x2="9" y2="9" stroke="white" stroke-width="1.5"/><line x1="9" y1="1" x2="1" y2="9" stroke="white" stroke-width="1.5"/></svg>
+            </div>
+            <!-- Local bg/ sample images (relative paths) so the preview works offline in the packaged exe; remote URLs failed to load in QtWebEngine. -->
+            <div class="bg-swatch card-swatch" data-img="bg/image-2.png" style="background:url(bg/image-2.png) center/cover;" title="bg/image-2.png"></div>
+            <div class="bg-swatch card-swatch" data-img="bg/image-9.png" style="background:url(bg/image-9.png) center/cover;" title="bg/image-9.png"></div>
+            <div class="bg-swatch card-swatch" data-img="bg/image-19.png" style="background:url(bg/image-19.png) center/cover;" title="bg/image-19.png"></div>
+            <div class="bg-swatch card-swatch" data-img="bg/image-24.png" style="background:url(bg/image-24.png) center/cover;" title="bg/image-24.png"></div>
+            <div class="bg-swatch card-swatch" data-img="bg/image-33.png" style="background:url(bg/image-33.png) center/cover;" title="bg/image-33.png"></div>
+            <div class="bg-swatch card-swatch" data-img="bg/image-44.png" style="background:url(bg/image-44.png) center/cover;" title="bg/image-44.png"></div>
+            <div class="bg-swatch card-swatch" data-img="bg/image-51.png" style="background:url(bg/image-51.png) center/cover;" title="bg/image-51.png"></div>
+            <div class="bg-swatch card-swatch" data-img="bg/image-60.png" style="background:url(bg/image-60.png) center/cover;" title="bg/image-60.png"></div>
+            <div class="bg-swatch card-swatch" data-img="bg/image-67.png" style="background:url(bg/image-67.png) center/cover;" title="bg/image-67.png"></div>
+            <div class="bg-swatch card-swatch" data-img="bg/image-73.png" style="background:url(bg/image-73.png) center/cover;" title="bg/image-73.png"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="preview-canvas" id="preview-canvas">
+      <!-- Mock card -->
+      <div id="mock-wrap">
+        <canvas id="mock-vis-canvas"></canvas>
+        <div id="mock-card">
+          <img id="mock-bg-a" src="" alt="">
+          <img id="mock-bg-b" src="" alt="">
+          <div class="mock-content" id="mock-content">
+            <div class="mock-marquee-clip" id="artist-clip"><div class="mock-artist" id="mock-artist">Floating Points</div></div>
+            <div class="mock-middle">
+              <div class="mock-bar-bg" id="mock-bar-bg">
+                <div class="mock-bar-fill" id="mock-bar-fill"></div>
+              </div>
+              <div class="mock-timer" id="mock-timer">1:27 / 4:32</div>
+            </div>
+            <div class="mock-marquee-clip" id="track-clip"><div class="mock-track" id="mock-track">LesAlpx</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Output panel -->
+    <div class="output-panel">
+      <div class="output-tabs">
+        <div class="output-tab active" data-tab="css">CSS variables</div>
+        <div class="output-tab" data-tab="js">JS config</div>
+        <div class="output-tab" data-tab="spectrum">Spectrum config</div>
+      </div>
+      <div class="output-body">
+        <div class="tab-content active" id="tab-css">
+          <pre id="out-css"></pre>
+        </div>
+        <div class="tab-content" id="tab-js">
+          <pre id="out-js"></pre>
+        </div>
+        <div class="tab-content" id="tab-spectrum">
+          <pre id="out-spectrum"></pre>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────
+const state = {
+  cardWidth:      340,
+  cardHeight:     0,    // 0 = auto
+  cardRadius:     20,
+  cardBlur:       22,
+  cardPx:         28,
+  cardPy:         18,
+  cardBorderOp:   13,
+  cardBgOp:       97,
+  cardGlass:      false,   // CARD_BACKDROP_BLUR — off by default (overlay F-017)
+  imgOp:          24,
+  imgBlur:        2,
+  imagesEnabled:  true,
+  albumArtEnabled: false,  // ALBUM_ART_BG — off by default so defaults match the overlay reference (FR-008)
+  spotifyImagesEnabled: false,
+  visGain:        1.0,
+  mode:           'foobar',  // 'foobar' or 'spotify'
+  trackOp:        69,
+  artistOp:       58,
+  timerOp:        45,
+  trackShadow:    8,
+  trackShadowOp:  77,
+  artistShadow:   6,
+  artistShadowOp: 70,
+  barFillOp:      57,
+  barBgOp:        0,
+  marqueeSpeed:   22,
+  fadeLeft:       1,
+  fadeRight:      2,
+  pollMs:         1000,
+  visEnabled:     true,
+  visColor:       '255, 255, 255',
+  visDepth:       22,
+  visBlur:        12,
+  visBrightness:  1.8,    // VIS_BRIGHTNESS — post-blur glow multiplier
+  visOpacity:     93,
+  visBands:       44,
+  visSmoothing:   25,
+  renderFps:      24,     // RENDER_FPS — canvas redraw cap (0 = uncapped)
+  // ── Background FFT motion (one logical feature; BG_MOTION toggles the group) ──
+  bgMotion:       false,
+  bgMotionBands:  6,
+  bgBaseBlur:     0.10,
+  bgBlurMaxAdd:   0.83,
+  bgZoomMaxAdd:   0.40,
+  bgBaselineZoom: 0.025,
+  bgZoomSmooth:   0.032,
+  bgBlurSmooth:   0.032,
+  bgDelaySmooth:  0.020,
+  bgMicroSmooth:  0.045,
+  trackSpread:    0,
+  trackSpreadOp:  90,
+  artistSpread:   0,
+  artistSpreadOp: 90,
+  specPort:       9001,
+  specDevice:     'Line 1',
+  specBands:      64,
+  specChunk:      1024,
+  specSmoothing:  50,
+  specGain:       8.0,
+  specFreqMin:    40,
+  specFreqMax:    16000,
+};
+
+// ── Defaults (reference copy, never mutated) ───────────────────
+const DEFAULTS = Object.freeze({ ...state });
+
+// ── Profile storage ────────────────────────────────────────────
+const AUTOSAVE_KEY = 'nowplaying_autosave';
+const PROFILES_KEY = 'nowplaying_profiles';
+
+function saveAutosave() {
+  try { localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(state)); } catch(_) {}
+}
+
+function loadAutosave() {
+  try {
+    const saved = localStorage.getItem(AUTOSAVE_KEY);
+    if (saved) Object.assign(state, JSON.parse(saved));
+  } catch(_) {}
+}
+
+function getProfiles() {
+  try { return JSON.parse(localStorage.getItem(PROFILES_KEY) || '{}'); } catch(_) { return {}; }
+}
+
+function saveProfiles(profiles) {
+  try { localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles)); } catch(_) {}
+}
+
+function syncAllInputs() {
+  // Sync every range/number input to current state
+  const map = {
+    'card-width': state.cardWidth, 'card-radius': state.cardRadius,
+    'card-blur': state.cardBlur, 'card-px': state.cardPx, 'card-py': state.cardPy,
+    'card-bg-op': state.cardBgOp, 'card-border-op': state.cardBorderOp,
+    'img-op': state.imgOp, 'img-blur': state.imgBlur,
+    'track-op': state.trackOp, 'artist-op': state.artistOp, 'timer-op': state.timerOp,
+    'track-shadow': state.trackShadow, 'track-shadow-op': state.trackShadowOp,
+    'artist-shadow': state.artistShadow, 'artist-shadow-op': state.artistShadowOp,
+    'bar-fill-op': state.barFillOp, 'bar-bg-op': state.barBgOp,
+    'marquee-speed': state.marqueeSpeed, 'fade-left': state.fadeLeft,
+    'fade-right': state.fadeRight, 'poll-ms': state.pollMs,
+  };
+  for (const [id, val] of Object.entries(map)) {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  }
+  document.getElementById('images-enabled').checked = state.imagesEnabled;
+  // Sync all displayed values
+  document.getElementById('val-width').textContent       = state.cardWidth + 'px';
+  document.getElementById('card-height').value           = state.cardHeight;
+  document.getElementById('val-height').textContent      = state.cardHeight > 0 ? state.cardHeight + 'px' : 'auto';
+  document.getElementById('val-radius').textContent      = state.cardRadius + 'px';
+  document.getElementById('val-blur').textContent        = state.cardBlur + 'px';
+  document.getElementById('val-px').textContent          = state.cardPx + 'px';
+  document.getElementById('val-py').textContent          = state.cardPy + 'px';
+  document.getElementById('val-bg-op').textContent       = state.cardBgOp + '%';
+  document.getElementById('val-border-op').textContent   = state.cardBorderOp + '%';
+  document.getElementById('val-img-op').textContent      = state.imgOp + '%';
+  document.getElementById('val-img-blur').textContent    = state.imgBlur + 'px';
+  document.getElementById('val-track-op').textContent    = state.trackOp + '%';
+  document.getElementById('val-artist-op').textContent   = state.artistOp + '%';
+  document.getElementById('val-timer-op').textContent    = state.timerOp + '%';
+  document.getElementById('val-track-sh').textContent    = state.trackShadow + 'px';
+  document.getElementById('val-track-sh-op').textContent = state.trackShadowOp + '%';
+  document.getElementById('val-artist-sh').textContent   = state.artistShadow + 'px';
+  document.getElementById('val-artist-sh-op').textContent= state.artistShadowOp + '%';
+  document.getElementById('val-bar-fill-op').textContent = state.barFillOp + '%';
+  document.getElementById('val-bar-bg-op').textContent   = state.barBgOp + '%';
+  document.getElementById('val-marquee').textContent     = state.marqueeSpeed + 's';
+  document.getElementById('val-fade-left').textContent   = state.fadeLeft + '%';
+  document.getElementById('val-fade-right').textContent  = state.fadeRight + '%';
+  document.getElementById('vis-enabled').checked         = state.visEnabled;
+  document.getElementById('vis-depth').value             = state.visDepth;
+  document.getElementById('val-vis-depth').textContent   = state.visDepth + 'px';
+  document.getElementById('vis-blur').value              = state.visBlur;
+  document.getElementById('val-vis-blur').textContent    = state.visBlur + 'px';
+  document.getElementById('vis-opacity').value           = state.visOpacity;
+  document.getElementById('val-vis-opacity').textContent = state.visOpacity + '%';
+  document.getElementById('vis-bands').value             = state.visBands;
+  document.getElementById('val-vis-bands').textContent   = state.visBands;
+  document.getElementById('vis-smoothing').value         = state.visSmoothing;
+  document.getElementById('val-vis-smoothing').textContent = state.visSmoothing + '%';
+  document.getElementById('track-spread').value          = state.trackSpread;
+  document.getElementById('val-track-spread').textContent= state.trackSpread + 'px';
+  document.getElementById('track-spread-op').value       = state.trackSpreadOp;
+  document.getElementById('val-track-spread-op').textContent = state.trackSpreadOp + '%';
+  document.getElementById('artist-spread').value         = state.artistSpread;
+  document.getElementById('val-artist-spread').textContent = state.artistSpread + 'px';
+  document.getElementById('artist-spread-op').value      = state.artistSpreadOp;
+  document.getElementById('val-artist-spread-op').textContent = state.artistSpreadOp + '%';
+  document.getElementById('spec-device').value            = state.specDevice;
+  document.getElementById('spec-port-range').value        = state.specPort;
+  document.getElementById('val-spec-port').textContent    = state.specPort;
+  document.getElementById('spec-bands').value             = state.specBands;
+  document.getElementById('val-spec-bands').textContent   = state.specBands;
+  document.getElementById('spec-chunk').value             = state.specChunk;
+  document.getElementById('val-spec-chunk').textContent   = state.specChunk;
+  document.getElementById('spec-smoothing').value         = state.specSmoothing;
+  document.getElementById('val-spec-smoothing').textContent = state.specSmoothing + '%';
+  document.getElementById('spec-gain').value              = state.specGain;
+  document.getElementById('val-spec-gain').textContent    = state.specGain.toFixed(1);
+  document.getElementById('spec-fmin').value              = state.specFreqMin;
+  document.getElementById('val-spec-fmin').textContent    = state.specFreqMin + ' Hz';
+  document.getElementById('spec-fmax').value              = state.specFreqMax;
+  document.getElementById('val-spec-fmax').textContent    = state.specFreqMax + ' Hz';
+  document.getElementById('album-art-enabled').checked    = state.albumArtEnabled;
+  document.getElementById('spotify-images-enabled').checked = state.spotifyImagesEnabled;
+  document.getElementById('vis-gain').value               = state.visGain;
+  document.getElementById('val-vis-gain').textContent     = state.visGain.toFixed(1);
+  document.getElementById('card-glass').checked           = state.cardGlass;
+  document.getElementById('bg-motion').checked            = state.bgMotion;
+  document.getElementById('vis-brightness').value         = state.visBrightness;
+  document.getElementById('val-vis-brightness').textContent = state.visBrightness.toFixed(1);
+  document.getElementById('render-fps').value             = state.renderFps;
+  document.getElementById('val-render-fps').textContent   = state.renderFps === 0 ? 'uncapped' : state.renderFps;
+}
+
+function renderProfileList(activeProfileName) {
+  const profiles = getProfiles();
+  const list = document.getElementById('profile-list');
+  list.innerHTML = '';
+  const names = Object.keys(profiles);
+  if (!names.length) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:4px 2px;">No saved profiles yet.</div>';
+    return;
+  }
+  names.forEach(name => {
+    const item = document.createElement('div');
+    item.className = 'profile-item' + (name === activeProfileName ? ' active-profile' : '');
+    item.innerHTML = `
+      <span class="profile-name" title="${name}">${name}</span>
+      <button class="profile-btn" data-action="load" data-name="${name}" title="Load">↩</button>
+      <button class="profile-btn del" data-action="delete" data-name="${name}" title="Delete">✕</button>
+    `;
+    list.appendChild(item);
+  });
+}
+
+// ── Profile events ─────────────────────────────────────────────
+document.getElementById('btn-save-profile').addEventListener('click', () => {
+  const name = document.getElementById('profile-name-input').value.trim();
+  if (!name) return;
+  const profiles = getProfiles();
+  profiles[name] = { ...state };
+  saveProfiles(profiles);
+  document.getElementById('profile-name-input').value = '';
+  renderProfileList(name);
+});
+
+document.getElementById('profile-list').addEventListener('click', e => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const name   = btn.dataset.name;
+  const action = btn.dataset.action;
+  const profiles = getProfiles();
+
+  if (action === 'load' && profiles[name]) {
+    Object.assign(state, profiles[name]);
+    syncAllInputs();
+    applyToMock();
+    renderProfileList(name);
+  } else if (action === 'delete') {
+    delete profiles[name];
+    saveProfiles(profiles);
+    renderProfileList();
+  }
+});
+
+document.getElementById('btn-reset-defaults').addEventListener('click', () => {
+  Object.assign(state, DEFAULTS);
+  syncAllInputs();
+  applyToMock();
+  renderProfileList();
+});
+
+
+const card       = document.getElementById('mock-card');
+const mockWrap   = document.getElementById('mock-wrap');
+const mockVisCanvas = document.getElementById('mock-vis-canvas');
+const mockContent= document.getElementById('mock-content');
+const mockArtist = document.getElementById('mock-artist');
+const mockTrack  = document.getElementById('mock-track');
+const mockTimer  = document.getElementById('mock-timer');
+const mockBarBg  = document.getElementById('mock-bar-bg');
+const mockBarFill= document.getElementById('mock-bar-fill');
+const mockBgA    = document.getElementById('mock-bg-a');
+const mockBgB    = document.getElementById('mock-bg-b');
+const canvas     = document.getElementById('preview-canvas');
+
+// ── Apply all state to the mock card ──────────────────────────
+function applyToMock() {
+  const s = state;
+
+  // Card
+  card.style.width         = s.cardWidth + 'px';
+  card.style.height        = s.cardHeight > 0 ? s.cardHeight + 'px' : '';
+  card.style.borderRadius  = s.cardRadius + 'px';
+  mockWrap.style.borderRadius = s.cardRadius + 'px';
+  mockVisCanvas.style.borderRadius = s.cardRadius + 'px';
+  card.style.padding       = `${s.cardPy}px ${s.cardPx}px`;
+  card.style.background    = `rgba(0,0,0,${s.cardBgOp/100})`;
+  card.style.border        = `0.5px solid rgba(255,255,255,${s.cardBorderOp/100})`;
+  // Card glass (backdrop blur) — live preview reflects the toggle (FR-010)
+  if (s.cardGlass) {
+    card.style.backdropFilter       = `blur(${s.cardBlur}px)`;
+    card.style.webkitBackdropFilter = `blur(${s.cardBlur}px)`;
+  } else {
+    card.style.backdropFilter       = '';
+    card.style.webkitBackdropFilter = '';
+  }
+
+  // Image bg
+  card.style.setProperty('--mock-img-opacity', s.imgOp / 100);
+  card.style.setProperty('--mock-marquee-speed', s.marqueeSpeed + 's');
+  mockBgA.style.filter  = `blur(${s.imgBlur}px)`;
+  mockBgB.style.filter  = `blur(${s.imgBlur}px)`;
+
+  // Text colours
+  mockArtist.style.color = `rgba(255,255,255,${s.artistOp/100})`;
+  mockTrack.style.color  = `rgba(255,255,255,${s.trackOp/100})`;
+  mockTimer.style.color  = `rgba(255,255,255,${s.timerOp/100})`;
+
+  // Shadows with spread
+  const tSpread = s.trackSpread > 0  ? `, 0 0 ${s.trackSpread}px rgba(0,0,0,${s.trackSpreadOp/100})`  : '';
+  const aSpread = s.artistSpread > 0 ? `, 0 0 ${s.artistSpread}px rgba(0,0,0,${s.artistSpreadOp/100})` : '';
+  const tsh = `0 1px ${s.trackShadow}px rgba(0,0,0,${s.trackShadowOp/100})${tSpread}`;
+  const ash  = `0 1px ${s.artistShadow}px rgba(0,0,0,${s.artistShadowOp/100})${aSpread}`;
+  mockTrack.style.textShadow  = tsh;
+  mockArtist.style.textShadow = ash;
+  mockTimer.style.textShadow  = ash;
+
+  // Progress bar
+  mockBarFill.style.background = `rgba(255,255,255,${s.barFillOp/100})`;
+  mockBarBg.style.background   = `rgba(255,255,255,${s.barBgOp/100})`;
+
+  // Fade mask + marquee state
+  applyMockMarquee();
+
+  updateOutput();
+  saveAutosave();
+}
+
+// ── Bind all controls ──────────────────────────────────────────
+// Control id -> state key map; the sync-LED uses it to detect group drift from DEFAULTS.
+const CTRL_KEYS = {};
+function bindRange(id, key, valId, unit, transform) {
+  CTRL_KEYS[id] = key;
+  const el  = document.getElementById(id);
+  const val = document.getElementById(valId);
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value);
+    state[key] = v;
+    val.textContent = transform ? transform(v) : v + unit;
+    applyToMock();
+  });
+}
+
+bindRange('card-width',       'cardWidth',      'val-width',         'px');
+bindRange('card-height',      'cardHeight',     'val-height',        '', v => v === 0 ? 'auto' : v + 'px');
+
+document.getElementById('card-height').addEventListener('input', e => {
+  state.cardHeight = parseInt(e.target.value);
+  document.getElementById('val-height').textContent = state.cardHeight > 0 ? state.cardHeight + 'px' : 'auto';
+  applyToMock();
+  updateOutput();
+});
+bindRange('card-radius',      'cardRadius',     'val-radius',        'px');
+bindRange('card-blur',        'cardBlur',       'val-blur',          'px');
+bindRange('card-px',          'cardPx',         'val-px',            'px');
+bindRange('card-py',          'cardPy',         'val-py',            'px');
+bindRange('card-bg-op',       'cardBgOp',       'val-bg-op',         '%');
+bindRange('card-border-op',   'cardBorderOp',   'val-border-op',     '%');
+bindRange('img-op',           'imgOp',          'val-img-op',        '%');
+bindRange('img-blur',         'imgBlur',        'val-img-blur',      'px');
+bindRange('track-op',         'trackOp',        'val-track-op',      '%');
+bindRange('artist-op',        'artistOp',       'val-artist-op',     '%');
+bindRange('timer-op',         'timerOp',        'val-timer-op',      '%');
+bindRange('track-shadow',     'trackShadow',    'val-track-sh',      'px');
+bindRange('track-shadow-op',  'trackShadowOp',  'val-track-sh-op',   '%');
+bindRange('artist-shadow',    'artistShadow',   'val-artist-sh',     'px');
+bindRange('artist-shadow-op', 'artistShadowOp', 'val-artist-sh-op',  '%');
+bindRange('bar-fill-op',      'barFillOp',      'val-bar-fill-op',   '%');
+bindRange('bar-bg-op',        'barBgOp',        'val-bar-bg-op',     '%');
+bindRange('marquee-speed',    'marqueeSpeed',   'val-marquee',       's');
+bindRange('fade-left',        'fadeLeft',        'val-fade-left',     '%');
+bindRange('fade-right',       'fadeRight',       'val-fade-right',    '%');
+bindRange('vis-depth',        'visDepth',        'val-vis-depth',     'px');
+bindRange('vis-blur',         'visBlur',         'val-vis-blur',      'px');
+bindRange('vis-opacity',      'visOpacity',      'val-vis-opacity',   '%');
+bindRange('vis-bands',        'visBands',        'val-vis-bands',     '');
+bindRange('vis-smoothing',    'visSmoothing',    'val-vis-smoothing', '%');
+bindRange('track-spread',     'trackSpread',     'val-track-spread',  'px');
+bindRange('track-spread-op',  'trackSpreadOp',   'val-track-spread-op','%');
+bindRange('artist-spread',    'artistSpread',    'val-artist-spread', 'px');
+bindRange('artist-spread-op', 'artistSpreadOp',  'val-artist-spread-op','%');
+
+bindRange('spec-port-range',  'specPort',       'val-spec-port',     '', v => Math.round(v));
+bindRange('spec-bands',       'specBands',      'val-spec-bands',    '');
+bindRange('spec-chunk',       'specChunk',      'val-spec-chunk',    '');
+bindRange('spec-smoothing',   'specSmoothing',  'val-spec-smoothing','%');
+bindRange('spec-gain',        'specGain',       'val-spec-gain',     '', v => v.toFixed(1));
+bindRange('spec-fmin',        'specFreqMin',    'val-spec-fmin',     ' Hz');
+bindRange('spec-fmax',        'specFreqMax',    'val-spec-fmax',     ' Hz');
+
+bindRange('vis-gain',         'visGain',        'val-vis-gain',      '', v => v.toFixed(1));
+bindRange('vis-brightness',   'visBrightness',  'val-vis-brightness','', v => v.toFixed(1));
+bindRange('render-fps',       'renderFps',      'val-render-fps',    '', v => v === 0 ? 'uncapped' : v);
+
+document.getElementById('card-glass').addEventListener('change', e => {
+  state.cardGlass = e.target.checked;
+  applyToMock();   // live preview reflects the toggle without export (FR-010)
+  updateOutput();
+});
+
+document.getElementById('bg-motion').addEventListener('change', e => {
+  state.bgMotion = e.target.checked;
+  updateOutput();
+});
+
+document.getElementById('spec-device').addEventListener('input', e => {
+  state.specDevice = e.target.value;
+  updateOutput();
+});
+
+document.getElementById('vis-enabled').addEventListener('change', e => {
+  state.visEnabled = e.target.checked;
+  updateOutput();
+});
+
+document.getElementById('album-art-enabled').addEventListener('change', e => {
+  state.albumArtEnabled = e.target.checked;
+  updateOutput();
+});
+
+document.getElementById('spotify-images-enabled').addEventListener('change', e => {
+  state.spotifyImagesEnabled = e.target.checked;
+  updateOutput();
+});
+
+// ── Mode switching ─────────────────────────────────────────────
+function setMode(mode) {
+  state.mode = mode;
+  document.getElementById('mode-foobar').classList.toggle('active', mode === 'foobar');
+  document.getElementById('mode-spotify').classList.toggle('active', mode === 'spotify');
+
+  // Toggle foobar-only elements
+  document.getElementById('images-enabled').closest('.toggle-row').style.display =
+    mode === 'foobar' ? '' : 'none';
+
+  // Toggle Spotify-only elements
+  document.getElementById('spotify-album-row').style.display =
+    mode === 'spotify' ? '' : 'none';
+  document.getElementById('spotify-images-row').style.display =
+    mode === 'spotify' ? '' : 'none';
+  document.getElementById('spotify-gain-section').style.display =
+    mode === 'spotify' ? '' : 'none';
+
+  // Update save button label
+  document.getElementById('btn-save').childNodes[1].textContent =
+    mode === 'spotify' ? ' Save Spotify file' : ' Save file';
+
+  updateOutput();
+}
+
+// Re-check marquee when width changes
+document.getElementById('card-width').addEventListener('input', () => {
+  requestAnimationFrame(applyMockMarquee);
+});
+
+document.getElementById('poll-ms').addEventListener('input', e => {
+  state.pollMs = parseInt(e.target.value) || 1000;
+  updateOutput();
+});
+
+document.getElementById('images-enabled').addEventListener('change', e => {
+  state.imagesEnabled = e.target.checked;
+  updateOutput();
+});
+
+// ── Background preview swatches ────────────────────────────────
+document.querySelectorAll('.canvas-swatch').forEach(swatch => {
+  swatch.addEventListener('click', () => {
+    document.querySelectorAll('.canvas-swatch').forEach(s => s.classList.remove('active'));
+    swatch.classList.add('active');
+    canvas.style.background = swatch.dataset.bg;
+  });
+});
+
+document.querySelectorAll('.card-swatch').forEach(swatch => {
+  swatch.addEventListener('click', () => {
+    document.querySelectorAll('.card-swatch').forEach(s => s.classList.remove('active'));
+    swatch.classList.add('active');
+    const url = swatch.dataset.img;
+    if (!url) {
+      mockBgA.src = '';
+      mockBgA.classList.remove('active');
+      mockBgB.src = '';
+      mockBgB.classList.remove('active');
+    } else {
+      // Set onload BEFORE src so a fast/cached local (file://) load can't fire
+      // before the handler is attached; also cover the already-complete case.
+      mockBgA.onload = () => mockBgA.classList.add('active');
+      mockBgA.src = url;
+      if (mockBgA.complete && mockBgA.naturalWidth > 0) mockBgA.classList.add('active');
+      mockBgB.classList.remove('active');
+    }
+  });
+});
+
+// ── Output tabs ────────────────────────────────────────────────
+document.querySelectorAll('.output-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.output-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// ── Generate output ────────────────────────────────────────────
+function r(v) { return Math.round(v * 100) / 100; }
+
+function getCSSOutput() {
+  const s = state;
+  return `  :root {
+    /* Card shape */
+    --card-bg:         rgba(0, 0, 0, ${r(s.cardBgOp/100)});
+    --card-border:     rgba(255, 255, 255, ${r(s.cardBorderOp/100)});
+    --card-blur:       ${s.cardBlur}px;
+    --card-radius:     ${s.cardRadius}px;
+    --card-padding-x:  ${s.cardPx}px;
+    --card-padding-y:  ${s.cardPy}px;
+    --card-width:      ${s.cardWidth}px;
+    --card-height:     ${s.cardHeight > 0 ? s.cardHeight + 'px' : 'auto'};
+
+    /* Background image treatment */
+    --img-opacity:     ${r(s.imgOp/100)};
+    --img-blur:        ${s.imgBlur}px;
+    --img-scale:       1.06;
+
+    /* Text */
+    --color-artist:    rgba(255, 255, 255, ${r(s.artistOp/100)});
+    --color-track:     rgba(255, 255, 255, ${r(s.trackOp/100)});
+    --color-timer:     rgba(255, 255, 255, ${r(s.timerOp/100)});
+
+    /* Progress bar */
+    --color-bar-bg:    rgba(255, 255, 255, ${r(s.barBgOp/100)});
+    --color-bar-fill:  rgba(255, 255, 255, ${r(s.barFillOp/100)});
+
+    /* Marquee */
+    --marquee-speed:   ${s.marqueeSpeed}s;
+
+    /* Fonts */
+    --font-artist: 'Syne', sans-serif;
+    --font-track:  'DM Sans', sans-serif;
+    --font-timer:  'DM Sans', sans-serif;
+  }
+
+/* Text shadows — find these in the CSS and replace: */
+
+  /* .artist and .timer */
+  text-shadow: 0 1px ${s.artistShadow}px rgba(0,0,0,${r(s.artistShadowOp/100)})${s.artistSpread > 0 ? `, 0 0 ${s.artistSpread}px rgba(0,0,0,${r(s.artistSpreadOp/100)})` : ''};
+
+  /* .track */
+  text-shadow: 0 1px ${s.trackShadow}px rgba(0,0,0,${r(s.trackShadowOp/100)})${s.trackSpread > 0 ? `, 0 0 ${s.trackSpread}px rgba(0,0,0,${r(s.trackSpreadOp/100)})` : ''};
+
+/* Edge fade — find mask-image in .content and replace: */
+  mask-image: linear-gradient(to right, transparent 0%, black ${s.fadeLeft}%, black ${100-s.fadeRight}%, transparent 100%);`;
+}
+
+function getJSOutput() {
+  const s = state;
+  return `  const CONFIG = {
+    ENDPOINT:       'http://localhost:8081/api/player?columns=%25artist%25,%25title%25,%25length_seconds%25',
+    POLL_MS:        ${s.pollMs},
+    DEMO_MODE:      false,
+    IMAGES:         ${s.imagesEnabled},
+
+    CARD_BACKDROP_BLUR: ${s.cardGlass},
+
+    VISUALIZER:     ${s.visEnabled},
+    SPECTRUM_PORT:  ${s.specPort},
+    VIS_COLOR:      '255, 255, 255',
+    VIS_MAX_OPACITY:${r(s.visOpacity/100)},
+    VIS_BAR_DEPTH:  ${s.visDepth},
+    VIS_BLUR:       ${s.visBlur},
+    VIS_BRIGHTNESS: ${s.visBrightness},
+    VIS_SMOOTHING:  ${r(s.visSmoothing/100)},
+    VIS_BANDS:      ${s.visBands},
+
+    BG_MOTION:        ${s.bgMotion},
+    BG_MOTION_BANDS:  ${s.bgMotionBands},
+    BG_BASE_BLUR:     ${s.bgBaseBlur},
+    BG_BLUR_MAX_ADD:  ${s.bgBlurMaxAdd},
+    BG_ZOOM_MAX_ADD:  ${s.bgZoomMaxAdd},
+    BG_BASELINE_ZOOM: ${s.bgBaselineZoom},
+    BG_ZOOM_SMOOTH:   ${s.bgZoomSmooth},
+    BG_BLUR_SMOOTH:   ${s.bgBlurSmooth},
+    BG_DELAY_SMOOTH:  ${s.bgDelaySmooth},
+    BG_MICRO_SMOOTH:  ${s.bgMicroSmooth},
+
+    RENDER_FPS:     ${s.renderFps},
+  };`;
+}
+
+function getSpectrumOutput() {
+  const s = state;
+  return `PORT        = ${s.specPort}
+DEVICE      = '${s.specDevice}'
+SAMPLE_RATE = 44100
+CHUNK       = ${s.specChunk}
+BANDS       = ${s.specBands}
+FPS         = 30
+SMOOTHING   = ${r(s.specSmoothing/100)}
+GAIN        = ${s.specGain.toFixed(1)}
+FREQ_MIN    = ${s.specFreqMin}
+FREQ_MAX    = ${s.specFreqMax}`;
+}
+
+function updateOutput() {
+  document.getElementById('out-css').textContent      = getCSSOutput();
+  document.getElementById('out-js').textContent       = getJSOutput();
+  document.getElementById('out-spectrum').textContent = getSpectrumOutput();
+  saveAutosave();
+}
+
+// ── Output tab switching ───────────────────────────────────────
+document.querySelectorAll('.output-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.output-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// ── Copy button ────────────────────────────────────────────────
+document.getElementById('btn-copy').addEventListener('click', () => {
+  const activeTab = document.querySelector('.output-tab.active').dataset.tab;
+  const text = activeTab === 'css' ? getCSSOutput()
+             : activeTab === 'js'  ? getJSOutput()
+             : getSpectrumOutput();
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('btn-copy');
+    btn.classList.add('success');
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Copied!`;
+    setTimeout(() => {
+      btn.classList.remove('success');
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy CSS`;
+    }, 2000);
+  });
+});
+
+// ── Save spectrum config button ────────────────────────────────
+document.getElementById('btn-save-spec').addEventListener('click', () => {
+  const s = state;
+  const py = `#!/usr/bin/env python3
+"""
+spectrum-server.py — auto-generated by configurator
+"""
+
+import argparse, asyncio, json, sys, threading
+import numpy as np
+import sounddevice as sd
+
+PORT        = ${() => state.specPort}
+DEVICE      = '${() => state.specDevice}'
+SAMPLE_RATE = 44100
+CHUNK       = ${() => state.specChunk}
+BANDS       = ${() => state.specBands}
+FPS         = 30
+SMOOTHING   = ${() => r(state.specSmoothing/100)}
+GAIN        = ${() => state.specGain.toFixed(1)}
+FREQ_MIN    = ${() => state.specFreqMin}
+FREQ_MAX    = ${() => state.specFreqMax}
+`;
+
+  // Build the full file by taking the template values
+  const specPy = generateSpectrumPy();
+  const blob = new Blob([specPy], { type: 'text/plain' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = 'spectrum-server.py';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+function generateSpectrumPy() {
+  const s = state;
+  return `#!/usr/bin/env python3
+"""
+spectrum-server.py
+Captures audio from a Windows audio device, computes FFT frequency bands,
+and streams them to connected WebSocket clients in real time.
+
+Requirements:
+    pip install sounddevice numpy scipy websockets
+
+Usage:
+    python spectrum-server.py
+    python spectrum-server.py --list   # list available devices
+"""
+
+import argparse
+import asyncio
+import json
+import sys
+import threading
+import numpy as np
+import sounddevice as sd
+
+# ═══════════════════════════════════════════════════════════════
+#  CONFIGURATION
+# ═══════════════════════════════════════════════════════════════
+
+PORT        = ${s.specPort}
+DEVICE      = '${s.specDevice}'
+SAMPLE_RATE = 44100
+CHUNK       = ${s.specChunk}
+BANDS       = ${s.specBands}
+FPS         = 30
+SMOOTHING   = ${r(s.specSmoothing/100)}
+GAIN        = ${s.specGain.toFixed(1)}
+FREQ_MIN    = ${s.specFreqMin}
+FREQ_MAX    = ${s.specFreqMax}
+
+# ═══════════════════════════════════════════════════════════════
+#  GLOBALS
+# ═══════════════════════════════════════════════════════════════
+
+band_levels  = [0.0] * BANDS
+peak_levels  = [1.0] * BANDS   # per-band AGC peaks (scale-invariant normalizer)
+clients      = set()
+lock         = threading.Lock()
+
+def find_device(name):
+    devices = sd.query_devices()
+    for i, d in enumerate(devices):
+        if d['max_input_channels'] > 0 and name.lower() in d['name'].lower():
+            return i, d['name']
+    return None, None
+
+def list_devices():
+    print("\\nAvailable input devices:")
+    print("─" * 50)
+    for i, d in enumerate(sd.query_devices()):
+        if d['max_input_channels'] > 0:
+            print(f"  [{i:2d}] {d['name']}")
+    print()
+
+def compute_bands(data):
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+    window   = np.hanning(len(data))
+    windowed = data * window
+    fft_vals = np.abs(np.fft.rfft(windowed))
+    freqs    = np.fft.rfftfreq(len(windowed), d=1.0 / SAMPLE_RATE)
+    mask     = (freqs >= FREQ_MIN) & (freqs <= FREQ_MAX)
+    freqs    = freqs[mask]
+    fft_vals = fft_vals[mask]
+    if len(fft_vals) == 0:
+        return [0.0] * BANDS
+    log_min  = np.log10(FREQ_MIN)
+    log_max  = np.log10(FREQ_MAX)
+    edges    = np.logspace(log_min, log_max, BANDS + 1)
+    band_vals = []
+    for i in range(BANDS):
+        lo, hi = edges[i], edges[i + 1]
+        idx    = np.where((freqs >= lo) & (freqs < hi))[0]
+        if len(idx) > 0:
+            band_vals.append(float(np.mean(fft_vals[idx])))
+        else:
+            band_vals.append(0.0)
+    for i in range(len(band_vals)):
+        bass_boost = 1.0 + (1.0 - i / len(band_vals)) * 1.2
+        band_vals[i] *= bass_boost
+    # Apply gain, then hand the UNCLIPPED signal to the AGC in audio_callback. The
+    # old [0,1] clip here was the SOLE source of volume-dependence: at loud volume
+    # bands slammed into 1.0 and the spectrum shape flattened. The per-band peak
+    # normalizer below is scale-invariant, so GAIN (and foobar's volume) cancel in
+    # steady state and the glow is volume-independent.
+    band_vals = [v * GAIN for v in band_vals]
+    return band_vals
+
+def audio_callback(indata, frames, time, status):
+    global band_levels, peak_levels
+    if status:
+        print(f"  Audio status: {status}", file=sys.stderr)
+    new_bands = compute_bands(indata)
+    with lock:
+        for i in range(BANDS):
+            # Scale-invariant per-band peak normalizer (AGC): the decaying peak
+            # tracks each band's own magnitude, so the normalized shape — and the
+            # overlay glow — is independent of foobar's output volume.
+            peak_levels[i] = max(peak_levels[i] * 0.995, new_bands[i])
+            normalized = min(1.0, new_bands[i] / peak_levels[i]) if peak_levels[i] > 0 else 0.0
+            band_levels[i] = band_levels[i] * SMOOTHING + normalized * (1 - SMOOTHING)
+
+async def handler(websocket):
+    clients.add(websocket)
+    print(f"  Client connected   ({len(clients)} total)")
+    try:
+        await websocket.wait_closed()
+    finally:
+        clients.discard(websocket)
+        print(f"  Client disconnected ({len(clients)} total)")
+
+async def broadcast_loop():
+    interval = 1.0 / FPS
+    while True:
+        await asyncio.sleep(interval)
+        if not clients:
+            continue
+        with lock:
+            payload = json.dumps([round(v, 4) for v in band_levels])
+        dead = set()
+        for ws in list(clients):
+            try:
+                await ws.send(payload)
+            except Exception:
+                dead.add(ws)
+        clients.difference_update(dead)
+
+async def main_async(device_index):
+    import websockets
+    print(f"\\n  Spectrum server starting on ws://localhost:{PORT}")
+    print(f"  Press Ctrl+C to stop\\n")
+    async with websockets.serve(handler, 'localhost', PORT):
+        await broadcast_loop()
+
+def main():
+    parser = argparse.ArgumentParser(description='Audio spectrum WebSocket server')
+    parser.add_argument('--device', type=str, default=DEVICE)
+    parser.add_argument('--list', action='store_true')
+    args = parser.parse_args()
+    if args.list:
+        list_devices()
+        return
+    device_index, device_name = find_device(args.device)
+    if device_index is None:
+        print(f"\\n  Device not found: '{args.device}'")
+        print("  Run with --list to see available devices.\\n")
+        sys.exit(1)
+    print(f"\\n  Device:  {device_name}  [{device_index}]")
+    print(f"  Bands:   {BANDS}")
+    print(f"  Rate:    {SAMPLE_RATE} Hz")
+    print(f"  Chunk:   {CHUNK} samples")
+    stream = sd.InputStream(
+        device=device_index,
+        channels=1,
+        samplerate=SAMPLE_RATE,
+        blocksize=CHUNK,
+        dtype='float32',
+        callback=audio_callback,
+    )
+    with stream:
+        asyncio.run(main_async(device_index))
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\\n  Stopped.")
+`;
+}
+
+// ── Mock visualizer ────────────────────────────────────────────
+(function initMockVisualizer() {
+  const visCanvas = mockVisCanvas;
+  const ctx       = visCanvas.getContext('2d');
+  const bands     = new Array(64).fill(0);
+  let rawBands    = new Array(64).fill(0);
+
+  function resizeMockVis() {
+    visCanvas.width  = mockWrap.offsetWidth  || card.offsetWidth;
+    visCanvas.height = mockWrap.offsetHeight || card.offsetHeight;
+  }
+  resizeMockVis();
+  new ResizeObserver(resizeMockVis).observe(card);
+
+  function drawMockVis() {
+    requestAnimationFrame(drawMockVis);
+    const s     = state;
+    const BANDS = s.visBands;
+    const W = visCanvas.width, H = visCanvas.height;
+    if (!W || !H) return;
+    const R = s.cardRadius || 20;
+
+    ctx.clearRect(0, 0, W, H);
+    if (!s.visEnabled) return;
+
+    ctx.filter = `blur(${s.visBlur}px) brightness(${s.visBrightness})`;
+
+    for (let i = 0; i < BANDS; i++) {
+      const target = rawBands[i] || 0;
+      bands[i] = bands[i] + (target - bands[i]) * (target > bands[i] ? s.visSmoothing/100 * 4 : s.visSmoothing/100);
+    }
+
+    const straightW = W - 2*R, straightH = H - 2*R;
+    const perimeter = 2*straightW + 2*straightH + Math.PI*2*R;
+    const bandStep  = perimeter / BANDS;
+    const [cr,cg,cb] = (s.visColor || '255,255,255').split(',').map(v => v.trim());
+
+    for (let i = 0; i < BANDS; i++) {
+      if (bands[i] < 0.005) continue;
+      const dist = i * bandStep + bandStep * 0.5;
+      let x, y, nx, ny;
+      if (dist < straightW) { x=R+dist; y=0; nx=0; ny=1; }
+      else if (dist < straightW + Math.PI*0.5*R) { const a=(dist-straightW)/R; x=W-R+Math.sin(a)*R; y=R-Math.cos(a)*R; nx=-Math.sin(a); ny=-Math.cos(a); }
+      else if (dist < straightW + Math.PI*0.5*R + straightH) { const d=dist-straightW-Math.PI*0.5*R; x=W; y=R+d; nx=-1; ny=0; }
+      else if (dist < straightW + Math.PI*R + straightH) { const a=(dist-straightW-Math.PI*0.5*R-straightH)/R; x=W-R+Math.cos(a)*R; y=H-R+Math.sin(a)*R; nx=-Math.cos(a); ny=-Math.sin(a); }
+      else if (dist < 2*straightW + Math.PI*R + straightH) { const d=dist-straightW-Math.PI*R-straightH; x=W-R-d; y=H; nx=0; ny=-1; }
+      else if (dist < 2*straightW + Math.PI*1.5*R + straightH) { const a=(dist-2*straightW-Math.PI*R-straightH)/R; x=R-Math.sin(a)*R; y=H-R+Math.cos(a)*R; nx=Math.sin(a); ny=-Math.cos(a); }
+      else if (dist < 2*straightW + Math.PI*1.5*R + 2*straightH) { const d=dist-2*straightW-Math.PI*1.5*R-straightH; x=0; y=H-R-d; nx=1; ny=0; }
+      else { const a=(dist-2*straightW-Math.PI*1.5*R-2*straightH)/R; x=R-Math.cos(a)*R; y=R-Math.sin(a)*R; nx=Math.cos(a); ny=Math.sin(a); }
+
+      const barH  = bands[i] * (s.visDepth || 22);
+      const alpha = bands[i] * (s.visOpacity/100 || 0.81);
+      const barW  = Math.max(3, bandStep * 1.2);
+      const grad  = ctx.createLinearGradient(x, y, x+nx*barH, y+ny*barH);
+      grad.addColorStop(0,   `rgba(${cr},${cg},${cb},${alpha.toFixed(3)})`);
+      grad.addColorStop(0.4, `rgba(${cr},${cg},${cb},${(alpha*0.6).toFixed(3)})`);
+      grad.addColorStop(1,   `rgba(${cr},${cg},${cb},0)`);
+      ctx.beginPath(); ctx.strokeStyle=grad; ctx.lineWidth=barW; ctx.lineCap='round';
+      ctx.moveTo(x,y); ctx.lineTo(x+nx*barH,y+ny*barH); ctx.stroke();
+    }
+    ctx.filter = 'none';
+  }
+  drawMockVis();
+
+  // Connect to spectrum server for live preview
+  function connectMockVis() {
+    const ws = new WebSocket(`ws://localhost:${state.specPort}`);
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (Array.isArray(data)) rawBands = data;
+      } catch(_) {}
+    };
+    ws.onclose = () => setTimeout(connectMockVis, 3000);
+    ws.onerror = () => {};
+  }
+  connectMockVis();
+})();
+
+// ── Generate full HTML ─────────────────────────────────────────
+function generateHTML() {
+  const s = state;
+  const aSpreadStr = s.artistSpread > 0 ? `, 0 0 ${s.artistSpread}px rgba(0,0,0,${r(s.artistSpreadOp/100)})` : '';
+  const tSpreadStr = s.trackSpread  > 0 ? `, 0 0 ${s.trackSpread}px rgba(0,0,0,${r(s.trackSpreadOp/100)})`  : '';
+  const artistShadow = `0 1px ${s.artistShadow}px rgba(0,0,0,${r(s.artistShadowOp/100)})${aSpreadStr}`;
+  const trackShadow  = `0 1px ${s.trackShadow}px rgba(0,0,0,${r(s.trackShadowOp/100)})${tSpreadStr}`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Now Playing Overlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --card-bg:         rgba(0, 0, 0, ${r(s.cardBgOp/100)});
+    --card-border:     rgba(255, 255, 255, ${r(s.cardBorderOp/100)});
+    --card-blur:       ${s.cardBlur}px;
+    --card-radius:     ${s.cardRadius}px;
+    --card-padding-x:  ${s.cardPx}px;
+    --card-padding-y:  ${s.cardPy}px;
+    --card-width:      ${s.cardWidth}px;
+    --card-height:     ${s.cardHeight > 0 ? s.cardHeight + 'px' : 'auto'};
+    --img-opacity:     ${r(s.imgOp/100)};
+    --img-blur:        ${s.imgBlur}px;
+    --img-scale:       1.06;
+    --color-artist:    rgba(255, 255, 255, ${r(s.artistOp/100)});
+    --color-track:     rgba(255, 255, 255, ${r(s.trackOp/100)});
+    --color-timer:     rgba(255, 255, 255, ${r(s.timerOp/100)});
+    --color-bar-bg:    rgba(255, 255, 255, ${r(s.barBgOp/100)});
+    --color-bar-fill:  rgba(255, 255, 255, ${r(s.barFillOp/100)});
+    --marquee-speed:   ${s.marqueeSpeed}s;
+    --font-artist: 'Syne', sans-serif;
+    --font-track:  'DM Sans', sans-serif;
+    --font-timer:  'DM Sans', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: transparent;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── GLOW WRAPPER ─────────────────────────────────────────────
+     Wraps the card so the canvas visualizer sits over it */
+  .card-wrap {
+    position: relative;
+    border-radius: var(--card-radius);
+    overflow: hidden;
+  }
+
+  #vis-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+    border-radius: var(--card-radius);
+    /* (#1) GPU-composited blur + brightness instead of per-stroke ctx.filter */
+    filter: var(--vis-filter, blur(12px) brightness(1.6));
+  }
+
+  .card {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--card-radius);
+    border: 0.5px solid var(--card-border);
+    background: var(--card-bg);
+    /* backdrop-filter applied at runtime from CONFIG.CARD_BACKDROP_BLUR (see script) */
+    padding: var(--card-padding-y) var(--card-padding-x);
+    width: var(--card-width);
+    height: var(--card-height);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    opacity: 0;
+    transform: translateY(5px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+
+  .card.visible { opacity: 1; transform: translateY(0); }
+
+  .bg-layer { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+
+  .bg-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 0.9s ease;
+    will-change: transform, filter;
+  }
+
+  .bg-img.active { opacity: var(--img-opacity); }
+
+  .content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .marquee-clip { overflow: hidden; width: 100%; }
+  .marquee-clip.scrolling {
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black ${s.fadeLeft}%, black ${100 - s.fadeRight}%, transparent 100%);
+    mask-image:         linear-gradient(to right, transparent 0%, black ${s.fadeLeft}%, black ${100 - s.fadeRight}%, transparent 100%);
+  }
+
+  @keyframes marquee-bounce {
+    0%   { transform: translateX(0); }
+    10%  { transform: translateX(0); }
+    45%  { transform: translateX(var(--marquee-offset)); }
+    55%  { transform: translateX(var(--marquee-offset)); }
+    90%  { transform: translateX(0); }
+    100% { transform: translateX(0); }
+  }
+
+  .marquee-clip.scrolling .inner {
+    animation: marquee-bounce var(--marquee-speed) ease-in-out infinite;
+  }
+
+  .artist {
+    font-family: var(--font-artist);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-artist);
+    white-space: nowrap;
+    text-shadow: ${artistShadow};
+    transition: opacity 0.15s ease;
+    font-variant-numeric: lining-nums;
+  }
+
+  .middle-row { display: flex; align-items: center; gap: 10px; }
+
+  .progress-bar {
+    flex: 1;
+    height: 2px;
+    background: var(--color-bar-bg);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-left: auto;
+  }
+
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--color-bar-fill);
+    border-radius: 2px;
+    transition: width 1s linear;
+  }
+
+  .timer {
+    font-family: var(--font-timer);
+    font-size: 11px;
+    font-weight: 300;
+    letter-spacing: 0.05em;
+    color: var(--color-timer);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    flex-shrink: 0;
+    text-shadow: ${artistShadow};
+  }
+
+  .track {
+    font-family: var(--font-track);
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--color-track);
+    white-space: nowrap;
+    text-shadow: ${trackShadow};
+    transition: opacity 0.15s ease;
+  }
+
+  .fade-out { opacity: 0 !important; }
+</style>
+</head>
+<body>
+
+<!-- Wrapper exists so box-shadow glow isn't clipped by card's overflow:hidden -->
+<div class="card-wrap" id="card-wrap">
+  <!-- Spectrum canvas — sits over the card border, pointer-events:none -->
+  <canvas id="vis-canvas"></canvas>
+  <div class="card" id="card">
+    <div class="bg-layer">
+      <img class="bg-img" id="bg-a" src="" alt="" decoding="async">
+      <img class="bg-img" id="bg-b" src="" alt="" decoding="async">
+    </div>
+    <div class="content">
+      <div class="marquee-clip" id="artist-clip">
+        <div class="inner artist" id="artist">Artist</div>
+      </div>
+      <div class="middle-row">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <div class="timer" id="timer">0:00 / 0:00</div>
+      </div>
+      <div class="marquee-clip" id="track-clip">
+        <div class="inner track" id="track">Track Title</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CONFIG = {
+  ENDPOINT:  'http://localhost:8081/api/player?columns=%25artist%25,%25title%25,%25length_seconds%25',
+  POLL_MS:   ${s.pollMs},
+  DEMO_MODE: false,
+  IMAGES:    ${s.imagesEnabled},
+
+  // ── CARD GLASS (backdrop-filter) ─────────────────────────────
+  // Frosted-glass blur behind the card. OFF by default for gaming
+  // streams: it re-blurs the full card backdrop every frame the scene
+  // behind the overlay changes — the overlay's heaviest GPU cost
+  // (audit finding F-017). Turn ON for music-specific streams or larger
+  // overlay cards where the glass actually reads. Radius = --card-blur (22px).
+  CARD_BACKDROP_BLUR: ${s.cardGlass},
+
+  // ── VISUALIZER ────────────────────────────────────────────────
+  //  Connects to spectrum-server.py (ws://localhost:9001) and
+  //  drives the border visualizer with real FFT frequency data.
+  //
+  //  SETUP:
+  //  Run spectrum-server.py before launching OBS.
+  //
+  VISUALIZER:        ${s.visEnabled},
+  SPECTRUM_PORT:     ${s.specPort},
+  VIS_COLOR:         '255, 255, 255',
+  VIS_MAX_OPACITY:   ${r(s.visOpacity/100)},
+  VIS_BAR_DEPTH:     ${s.visDepth},
+  VIS_BLUR:          ${s.visBlur},
+  VIS_BRIGHTNESS:    ${s.visBrightness},     // post-blur brightness multiplier — restores glow intensity lost to CSS blur spread (1.0 = none, 1.6 ≈ original ctx.filter look)
+  VIS_SMOOTHING:     ${r(s.visSmoothing/100)},
+  VIS_BANDS:         ${s.visBands},
+  
+  // ── BACKGROUND FFT MOTION (independent from visualizer) ──────
+  // Separate smoothing/band logic from the visualizer.
+  // This only affects the background image and does not touch the
+  // existing glow/visualizer system in any way.
+  BG_MOTION: ${s.bgMotion},
+  BG_MOTION_BANDS: ${s.bgMotionBands},          // group server FFT into 6 broad bands
+  BG_BASE_BLUR: ${s.bgBaseBlur},          // extra blur always present on top of --img-blur
+  BG_BLUR_MAX_ADD: ${s.bgBlurMaxAdd},       // FFT blur modulation stays very small
+  BG_ZOOM_MAX_ADD: ${s.bgZoomMaxAdd},      // ~1.8% max extra zoom from FFT
+  BG_BASELINE_ZOOM: ${s.bgBaselineZoom},    // slow continuous "breathing"
+  BG_ZOOM_SMOOTH: ${s.bgZoomSmooth},       // slow inertia for cinematic zoom
+  BG_BLUR_SMOOTH: ${s.bgBlurSmooth},       // slightly faster inertia for blur
+  BG_DELAY_SMOOTH: ${s.bgDelaySmooth},      // intentional lag vs foreground glow
+  BG_MICRO_SMOOTH: ${s.bgMicroSmooth},      // heavily smoothed high-band micro motion
+
+  // ── RENDER RATE CAP ──────────────────────────────────────────
+  // Caps how often the canvas is redrawn and bg motion is updated.
+  // Server sends FFT data at 30 FPS, so anything above 30 just
+  // re-renders the same data. Lower = less CPU. Set to 0 for uncapped.
+  RENDER_FPS: ${s.renderFps},
+};
+
+// ── Elements ───────────────────────────────────────────────────
+const cardWrap  = document.getElementById('card-wrap');
+const card      = document.getElementById('card');
+const elArtist  = document.getElementById('artist');
+const elTrack   = document.getElementById('track');
+const elTimer   = document.getElementById('timer');
+const elFill    = document.getElementById('progress-fill');
+const bgA       = document.getElementById('bg-a');
+const bgB       = document.getElementById('bg-b');
+const artistClip= document.getElementById('artist-clip');
+const trackClip = document.getElementById('track-clip');
+
+let imgQueue = [], allImages = [], activeLayer = 'a', lastTitle = '';
+const visGain = 1.33;  // constant aesthetic gain. The server's AGC now runs on
+                       // unclipped audio (see spectrum-server.py), so its output
+                       // is volume-independent — no per-volume compensation needed.
+                       // 1.33 = the visually-calibrated reference brightness.
+
+// (#1) Apply VIS_BLUR + VIS_BRIGHTNESS as a chained CSS filter (GPU-composited)
+document.getElementById('vis-canvas').style.setProperty(
+  '--vis-filter',
+  \`blur(\${CONFIG.VIS_BLUR}px) brightness(\${CONFIG.VIS_BRIGHTNESS})\`
+);
+
+// Card glass blur — operator toggle. When on, reproduces the baseline
+// backdrop-filter exactly (radius read from --card-blur); when off, no
+// backdrop pass at all. Missing/invalid flag falls back to off.
+if (CONFIG.CARD_BACKDROP_BLUR) {
+  const cardBlur = getComputedStyle(document.documentElement)
+    .getPropertyValue('--card-blur').trim() || '22px';
+  card.style.setProperty('backdrop-filter', \`blur(\${cardBlur})\`);
+  card.style.setProperty('-webkit-backdrop-filter', \`blur(\${cardBlur})\`);
+}
+
+// (#4) Cache card radius — never changes at runtime
+const cachedCardRadius = parseFloat(getComputedStyle(document.documentElement)
+  .getPropertyValue('--card-radius')) || 20;
+
+// (#5) Parse VIS_COLOR once
+const [VIS_CR, VIS_CG, VIS_CB] = CONFIG.VIS_COLOR.split(',').map(s => s.trim());
+
+// (#7) Read base CSS values for bg-img once for direct style writes
+const bgBaseScale = parseFloat(getComputedStyle(document.documentElement)
+  .getPropertyValue('--img-scale')) || 1.06;
+const bgBaseBlur  = parseFloat(getComputedStyle(document.documentElement)
+  .getPropertyValue('--img-blur'))  || 1;
+
+// (#8) Visibility tracking for rAF pause
+let cardVisible = false;
+let rafId       = null;
+
+// ── Images ─────────────────────────────────────────────────────
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function nextImage() {
+  if (!CONFIG.IMAGES || !allImages.length) return;
+  if (!imgQueue.length) imgQueue = shuffle(allImages);
+  const src      = imgQueue.pop();
+  const incoming = activeLayer === 'a' ? bgB : bgA;
+  const outgoing = activeLayer === 'a' ? bgA : bgB;
+  incoming.src = src;
+  incoming.onload = () => {
+    incoming.classList.add('active');
+    outgoing.classList.remove('active');
+    activeLayer = activeLayer === 'a' ? 'b' : 'a';
+  };
+}
+
+async function loadImageList() {
+  if (!CONFIG.IMAGES) return;
+  try {
+    const res   = await fetch('http://localhost:8081/bg-list', { cache: 'no-store' });
+    const files = await res.json();
+    if (!files.length) return;
+    allImages = files;
+    imgQueue  = shuffle(allImages);
+    const first = imgQueue.pop();
+    bgA.src = first;
+    bgA.onload = () => bgA.classList.add('active');
+  } catch (_) {}
+}
+
+loadImageList();
+
+// ── Marquee ─────────────────────────────────────────────────────
+function applyMarquee(clip, inner) {
+  clip.classList.remove('scrolling');
+  inner.style.removeProperty('--marquee-offset');
+  clip.style.webkitMaskImage = '';
+  clip.style.maskImage = '';
+  requestAnimationFrame(() => {
+    const overflow = inner.scrollWidth - clip.clientWidth;
+    if (overflow > 2) {
+      inner.style.setProperty('--marquee-offset', \`-\${overflow}px\`);
+      clip.classList.add('scrolling');
+    }
+  });
+}
+
+// ── Helpers ─────────────────────────────────────────────────────
+function fmtTime(s) {
+  s = Math.max(0, Math.floor(s));
+  return Math.floor(s / 60) + ':' + (s % 60).toString().padStart(2, '0');
+}
+
+// ── UI update ───────────────────────────────────────────────────
+function updateUI({ artist, title, position, duration }) {
+  const isNewTrack = title !== lastTitle;
+  if (isNewTrack) {
+    elArtist.classList.add('fade-out');
+    elTrack.classList.add('fade-out');
+    setTimeout(() => {
+      elArtist.textContent = artist || '—';
+      elTrack.textContent  = title  || '—';
+      elArtist.classList.remove('fade-out');
+      elTrack.classList.remove('fade-out');
+      applyMarquee(artistClip, elArtist);
+      applyMarquee(trackClip,  elTrack);
+    }, 160);
+    nextImage();
+    lastTitle = title;
+  }
+  elTimer.textContent = fmtTime(position) + ' / ' + fmtTime(duration);
+  elFill.style.width  = duration > 0 ? Math.min(100, (position / duration) * 100) + '%' : '0%';
+
+  // (#8) Track visibility and start/stop rAF loop
+  if (!cardVisible) {
+    cardVisible = true;
+    card.classList.add('visible');
+    startAnimationLoop();
+  }
+}
+
+// (#8) Hide card and stop rAF when nothing is playing
+function hideCard() {
+  if (cardVisible) {
+    cardVisible = false;
+    card.classList.remove('visible');
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+  }
+}
+
+// ── Background FFT motion (independent system) ─────────────────
+// Separate FFT consumer for background image only.
+// - Groups incoming FFT into broad bands
+// - Shapes signal with a curve to soften low-level chatter
+// - Uses delayed targets + inertia so motion trails behind glow
+
+const BG_BAND_GROUPS = CONFIG.BG_MOTION_BANDS;
+const bgGroupedBands = new Array(BG_BAND_GROUPS).fill(0);
+let bgDelayedLow  = 0, bgDelayedMid  = 0, bgDelayedHigh = 0;
+let bgZoomValue   = 1, bgBlurValue   = CONFIG.BG_BASE_BLUR, bgMicroValue = 0;
+const bgEnabled   = CONFIG.IMAGES && CONFIG.BG_MOTION;
+
+// Soft shaping to reduce chatter/spikes and keep motion subtle
+function bgShape(v) {
+  const clamped = Math.max(0, Math.min(1, v));
+  return Math.pow(clamped, 1.55);
+}
+
+// Group 64 server bands into 6 broad bands
+function bgRegroup(src) {
+  if (!bgEnabled || !Array.isArray(src) || !src.length) return;
+  for (let i = 0; i < BG_BAND_GROUPS; i++) {
+    const start = Math.floor(i * src.length / BG_BAND_GROUPS);
+    const end   = Math.max(start + 1, Math.floor((i + 1) * src.length / BG_BAND_GROUPS));
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += src[j] || 0;
+    bgGroupedBands[i] = sum / (end - start);
+  }
+}
+
+function bgAnimate(t) {
+  if (!bgEnabled) return;
+
+  // Broad frequency mapping:
+  // - bass drives slow zoom
+  // - mids drive blur
+  // - highs add tiny, heavily-smoothed micro-variation
+  const lowRaw  = (bgGroupedBands[0] * 0.72) + (bgGroupedBands[1] * 0.28);
+  const midRaw  = (bgGroupedBands[2] * 0.55) + (bgGroupedBands[3] * 0.45);
+  const highRaw = (bgGroupedBands[4] * 0.45) + (bgGroupedBands[5] * 0.55);
+
+  // Shape + soft clamp so peaks do not snap the image
+  const lowTarget  = Math.min(0.95, bgShape(lowRaw));
+  const midTarget  = Math.min(0.85, bgShape(midRaw) * 0.9);
+  const highTarget = Math.min(0.70, bgShape(highRaw) * 0.7);
+
+  // Intentional response delay: background trails the foreground glow
+  bgDelayedLow  += (lowTarget  - bgDelayedLow)  * CONFIG.BG_DELAY_SMOOTH;
+  bgDelayedMid  += (midTarget  - bgDelayedMid)  * (CONFIG.BG_DELAY_SMOOTH * 1.15);
+  bgDelayedHigh += (highTarget - bgDelayedHigh) * (CONFIG.BG_DELAY_SMOOTH * 0.9);
+
+  // Slow baseline breathing independent of FFT
+  const baselineZoom = 1 + CONFIG.BG_BASELINE_ZOOM * (0.5 + 0.5 * Math.sin(t * 0.16));
+
+  // Tiny high-band variation, smoothed enough to avoid visual noise
+  bgMicroValue += (bgDelayedHigh - bgMicroValue) * CONFIG.BG_MICRO_SMOOTH;
+
+  // Map FFT → zoom/blur
+  const zoomTarget = baselineZoom + (bgDelayedLow * CONFIG.BG_ZOOM_MAX_ADD) + (bgMicroValue * 0.0015);
+  const blurTarget = CONFIG.BG_BASE_BLUR + (bgDelayedMid * CONFIG.BG_BLUR_MAX_ADD) + (bgMicroValue * 0.06);
+
+  // Inertia smoothing — zoom is slower than blur so it feels deeper/heavier
+  bgZoomValue += (zoomTarget - bgZoomValue) * CONFIG.BG_ZOOM_SMOOTH;
+  bgBlurValue += (blurTarget - bgBlurValue) * CONFIG.BG_BLUR_SMOOTH;
+
+  // (#7) Write directly to active bg-img elements, bypassing CSS variable resolution
+  const finalScale = bgBaseScale * bgZoomValue;
+  const finalBlur  = bgBaseBlur + bgBlurValue;
+  const transformStr = \`scale(\${finalScale})\`;
+  const filterStr    = \`blur(\${finalBlur}px)\`;
+
+  if (bgA.classList.contains('active')) {
+    bgA.style.transform = transformStr;
+    bgA.style.filter    = filterStr;
+  }
+  if (bgB.classList.contains('active')) {
+    bgB.style.transform = transformStr;
+    bgB.style.filter    = filterStr;
+  }
+}
+
+// ── Visualizer ─────────────────────────────────────────────────
+const visCanvas  = document.getElementById('vis-canvas');
+const visCtx     = visCanvas.getContext('2d');
+const VIS_BANDS  = CONFIG.VIS_BANDS;
+const visBands   = new Float64Array(VIS_BANDS);  // smoothed
+const visRaw     = new Float64Array(VIS_BANDS);  // raw from WebSocket
+
+// (#9) Precomputed band positions — recalculated on resize only
+let bandPositions = null;  // [{x, y, nx, ny}, ...]
+let cachedBarW    = 3;
+
+function computeBandPositions() {
+  const W = visCanvas.width;
+  const H = visCanvas.height;
+  const R = cachedCardRadius;
+  const straightW = W - 2 * R;
+  const straightH = H - 2 * R;
+  const perimeter = 2 * straightW + 2 * straightH + Math.PI * 2 * R;
+  const bandStep  = perimeter / VIS_BANDS;
+
+  cachedBarW = Math.max(3, bandStep * 1.2);
+  bandPositions = new Array(VIS_BANDS);
+
+  for (let i = 0; i < VIS_BANDS; i++) {
+    const dist = i * bandStep + bandStep * 0.5;
+    let x, y, nx, ny;
+
+    if (dist < straightW) {
+      x = R + dist; y = 0; nx = 0; ny = 1;
+    } else if (dist < straightW + Math.PI * 0.5 * R) {
+      const a = (dist - straightW) / R;
+      x = W - R + Math.sin(a) * R; y = R - Math.cos(a) * R;
+      nx = -Math.sin(a); ny = -Math.cos(a);
+    } else if (dist < straightW + Math.PI * 0.5 * R + straightH) {
+      const d = dist - straightW - Math.PI * 0.5 * R;
+      x = W; y = R + d; nx = -1; ny = 0;
+    } else if (dist < straightW + Math.PI * R + straightH) {
+      const a = (dist - straightW - Math.PI * 0.5 * R - straightH) / R;
+      x = W - R + Math.cos(a) * R; y = H - R + Math.sin(a) * R;
+      nx = -Math.cos(a); ny = -Math.sin(a);
+    } else if (dist < 2 * straightW + Math.PI * R + straightH) {
+      const d = dist - straightW - Math.PI * R - straightH;
+      x = W - R - d; y = H; nx = 0; ny = -1;
+    } else if (dist < 2 * straightW + Math.PI * 1.5 * R + straightH) {
+      const a = (dist - 2 * straightW - Math.PI * R - straightH) / R;
+      x = R - Math.sin(a) * R; y = H - R + Math.cos(a) * R;
+      nx = Math.sin(a); ny = -Math.cos(a);
+    } else if (dist < 2 * straightW + Math.PI * 1.5 * R + 2 * straightH) {
+      const d = dist - 2 * straightW - Math.PI * 1.5 * R - straightH;
+      x = 0; y = H - R - d; nx = 1; ny = 0;
+    } else {
+      const a = (dist - 2 * straightW - Math.PI * 1.5 * R - 2 * straightH) / R;
+      x = R - Math.cos(a) * R; y = R - Math.sin(a) * R;
+      nx = Math.cos(a); ny = Math.sin(a);
+    }
+
+    bandPositions[i] = { x, y, nx, ny };
+  }
+}
+
+// Size canvas to match card
+function visResize() {
+  visCanvas.width  = cardWrap.offsetWidth;
+  visCanvas.height = cardWrap.offsetHeight;
+  computeBandPositions();
+}
+visResize();
+window.addEventListener('resize', visResize);
+
+function visDraw() {
+  const W     = visCanvas.width;
+  const H     = visCanvas.height;
+  const depth = CONFIG.VIS_BAR_DEPTH;
+
+  visCtx.clearRect(0, 0, W, H);
+  // (#1) No ctx.filter — blur is handled by CSS on the canvas element
+
+  // Smooth bands — snappy attack, gentle decay
+  for (let i = 0; i < VIS_BANDS; i++) {
+    const target = visRaw[i];
+    const rate   = target > visBands[i]
+      ? CONFIG.VIS_SMOOTHING * 4
+      : CONFIG.VIS_SMOOTHING;
+    visBands[i] += (target - visBands[i]) * rate;
+  }
+
+  // (#6) Reuse line settings across all bands
+  visCtx.lineCap = 'round';
+  visCtx.lineWidth = cachedBarW;
+
+  for (let i = 0; i < VIS_BANDS; i++) {
+    if (visBands[i] < 0.005) continue;
+
+    const pos   = bandPositions[i];
+    const barH  = visBands[i] * depth;
+    const alpha = visBands[i] * CONFIG.VIS_MAX_OPACITY;
+    const endX  = pos.x + pos.nx * barH;
+    const endY  = pos.y + pos.ny * barH;
+
+    // (#6) Gradient with pre-parsed color channels — (#10) no .toFixed()
+    const grad = visCtx.createLinearGradient(pos.x, pos.y, endX, endY);
+    grad.addColorStop(0,   \`rgba(\${VIS_CR},\${VIS_CG},\${VIS_CB},\${alpha})\`);
+    grad.addColorStop(0.4, \`rgba(\${VIS_CR},\${VIS_CG},\${VIS_CB},\${alpha * 0.6})\`);
+    grad.addColorStop(1,   \`rgba(\${VIS_CR},\${VIS_CG},\${VIS_CB},0)\`);
+
+    visCtx.beginPath();
+    visCtx.strokeStyle = grad;
+    visCtx.moveTo(pos.x, pos.y);
+    visCtx.lineTo(endX, endY);
+    visCtx.stroke();
+  }
+}
+
+// ── (#2) Single rAF loop ────────────────────────────────────────
+// Frame interval for the render rate cap. 0 = uncapped (run at browser rAF rate).
+const FRAME_INTERVAL_MS = CONFIG.RENDER_FPS > 0 ? 1000 / CONFIG.RENDER_FPS : 0;
+let   lastFrameTime     = 0;
+
+function animationLoop() {
+  rafId = requestAnimationFrame(animationLoop);
+
+  const now = performance.now();
+  // Gate: skip work if not enough time has elapsed since last render.
+  // The 0.5ms epsilon prevents missing frames due to rAF/vsync alignment.
+  if (FRAME_INTERVAL_MS > 0 && (now - lastFrameTime) < (FRAME_INTERVAL_MS - 0.5)) return;
+  lastFrameTime = now;
+
+  const t = now * 0.001;
+
+  // Background motion (uses its own config/state/smoothing)
+  bgAnimate(t);
+
+  // Visualizer canvas draw
+  if (CONFIG.VISUALIZER) visDraw();
+}
+
+// (#8) Start/stop helpers
+function startAnimationLoop() {
+  if (rafId === null) {
+    lastFrameTime = 0;  // ensure first frame after restart renders immediately
+    rafId = requestAnimationFrame(animationLoop);
+  }
+}
+
+// ── (#3) Shared WebSocket connection ────────────────────────────
+function connectSpectrum() {
+  if (!CONFIG.VISUALIZER && !bgEnabled) return;
+
+  const ws = new WebSocket(\`ws://localhost:\${CONFIG.SPECTRUM_PORT}\`);
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (!Array.isArray(data)) return;
+
+      // Feed visualizer (44 bands, own gain)
+      if (CONFIG.VISUALIZER) {
+        for (let i = 0; i < VIS_BANDS; i++) {
+          const idx = Math.floor(i * data.length / VIS_BANDS);
+          visRaw[i] = Math.min(1, (data[idx] || 0) * visGain);
+        }
+      }
+
+      // Feed background motion (6 broad bands, own regroup/shaping)
+      bgRegroup(data);
+    } catch (_) {}
+  };
+
+  ws.onclose = () => setTimeout(connectSpectrum, 3000);
+  ws.onerror = () => {};
+}
+
+// ── Fetch ───────────────────────────────────────────────────────
+async function fetchNowPlaying() {
+  try {
+    const res  = await fetch(CONFIG.ENDPOINT, { cache: 'no-store' });
+    const data = await res.json();
+    const item = data?.player?.activeItem;
+    if (!item || item.index < 0) { hideCard(); return; }
+    updateUI({
+      artist:   item.columns?.[0] || '—',
+      title:    item.columns?.[1] || '—',
+      position: parseFloat(item.position) || 0,
+      duration: parseFloat(item.duration) || 0,
+    });
+  } catch (_) { hideCard(); }
+}
+
+fetchNowPlaying();
+setInterval(fetchNowPlaying, CONFIG.POLL_MS);
+
+// ── Initialize bg-img baseline (#7) ─────────────────────────────
+// Set initial transform/filter directly so images don't start unstyled
+const initTransform = \`scale(\${bgBaseScale})\`;
+const initFilter    = \`blur(\${bgBaseBlur + CONFIG.BG_BASE_BLUR}px)\`;
+bgA.style.transform = initTransform;
+bgA.style.filter    = initFilter;
+bgB.style.transform = initTransform;
+bgB.style.filter    = initFilter;
+
+// ── Start spectrum connection ───────────────────────────────────
+connectSpectrum();
+<\/script>
+</body>
+</html>
+`;
+}
+
+// ── Save button ────────────────────────────────────────────────
+document.getElementById('btn-save').addEventListener('click', () => {
+  const isSpotify = state.mode === 'spotify';
+  const html      = isSpotify ? generateSpotifyHTML() : generateHTML();
+  const filename  = isSpotify ? 'nowplaying-spotify.html' : 'nowplaying-overlay.html';
+  const blob = new Blob([html], { type: 'text/html' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// ── Copy HTML button ───────────────────────────────────────────
+document.getElementById('btn-copy-html').addEventListener('click', () => {
+  const html = state.mode === 'spotify' ? generateSpotifyHTML() : generateHTML();
+  navigator.clipboard.writeText(html).then(() => {
+    const btn = document.getElementById('btn-copy-html');
+    btn.classList.add('success');
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Copied!`;
+    setTimeout(() => {
+      btn.classList.remove('success');
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg> Copy HTML`;
+    }, 2000);
+  });
+});
+
+// ── Mock marquee ───────────────────────────────────────────────
+function applyMockMarquee() {
+  const fl   = state.fadeLeft, fr = state.fadeRight;
+  const mask = `linear-gradient(to right, transparent 0%, black ${fl}%, black ${100-fr}%, transparent 100%)`;
+
+  [['artist-clip', mockArtist], ['track-clip', mockTrack]].forEach(([clipId, el]) => {
+    const clip = document.getElementById(clipId);
+    if (!clip) return;
+    const overflow = el.scrollWidth - clip.clientWidth;
+    if (overflow > 2) {
+      el.style.setProperty('--marquee-offset', `-${overflow}px`);
+      clip.classList.add('scrolling');
+      clip.style.webkitMaskImage = mask;
+      clip.style.maskImage       = mask;
+    } else {
+      el.style.removeProperty('--marquee-offset');
+      clip.classList.remove('scrolling');
+      clip.style.webkitMaskImage = '';
+      clip.style.maskImage       = '';
+    }
+  });
+}
+
+
+// ── Live track preview ─────────────────────────────────────────
+// Pull real now-playing data from the running overlay server (the same source
+// the overlay itself uses) so the preview card mirrors the actual track instead
+// of manual text. Endpoint follows the mode. Falls back to a sample track when
+// the server isn't reachable (e.g. configurator opened in a plain browser with
+// no servers running) so the preview is never blank. CORS is allowed by
+// overlay-server.ps1 (Access-Control-Allow-Origin: *).
+(function () {
+  const FOOBAR_EP  = 'http://localhost:8081/api/player?columns=%25artist%25,%25title%25,%25length_seconds%25';
+  const SPOTIFY_EP = 'http://localhost:8081/api/spotify/current';
+  const SAMPLE = { artist: 'Floating Points', title: 'LesAlpx', position: 87, duration: 272 };
+
+  function fmt(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + String(s).padStart(2, '0');
+  }
+
+  function paint({ artist, title, position, duration }) {
+    mockArtist.textContent = artist || 'Artist';
+    mockTrack.textContent  = title  || 'Track Title';
+    mockTimer.textContent  = fmt(position) + ' / ' + fmt(duration);
+    const pct = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
+    mockBarFill.style.width = pct.toFixed(1) + '%';
+    applyMockMarquee();
+  }
+
+  async function poll() {
+    try {
+      if (state.mode === 'spotify') {
+        const res  = await fetch(SPOTIFY_EP, { cache: 'no-store' });
+        const data = await res.json();
+        if (!data.is_playing && !data.item) { paint(SAMPLE); return; }
+        const item = data.item || {};
+        paint({
+          artist:   item.artists?.map(a => a.name).join(', ') || '—',
+          title:    item.name || '—',
+          position: (data.progress_ms || 0) / 1000,
+          duration: (item.duration_ms || 0) / 1000,
+        });
+      } else {
+        const res  = await fetch(FOOBAR_EP, { cache: 'no-store' });
+        const data = await res.json();
+        const item = data?.player?.activeItem;
+        if (!item || item.index < 0) { paint(SAMPLE); return; }
+        paint({
+          artist:   item.columns?.[0] || '—',
+          title:    item.columns?.[1] || '—',
+          position: parseFloat(item.position) || 0,
+          duration: parseFloat(item.duration) || 0,
+        });
+      }
+    } catch (_) {
+      paint(SAMPLE);  // server not reachable — keep the preview populated
+    }
+  }
+
+  // Recursive timeout (not setInterval) so a changed poll interval takes effect.
+  function loop() {
+    poll().finally(() => setTimeout(loop, Math.max(250, state.pollMs || 1000)));
+  }
+  paint(SAMPLE);  // immediate so the card is never empty before the first poll
+  loop();
+})();
+
+
+// ── Pull values from HTML file ─────────────────────────────────
+document.getElementById('btn-pull').addEventListener('click', () => {
+  document.getElementById('pull-file-input').click();
+});
+
+document.getElementById('pull-file-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const html = ev.target.result;
+    const get  = (pattern, def) => {
+      const m = html.match(pattern);
+      return m ? parseFloat(m[1]) : def;
+    };
+    const getStr = (pattern, def) => {
+      const m = html.match(pattern);
+      return m ? m[1] : def;
+    };
+    // true/false flag with documented fallback (missing/invalid -> def)
+    const getBool = (pattern, def) => {
+      const m = html.match(pattern);
+      return m ? m[1] === 'true' : def;
+    };
+    const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, isNaN(v) ? lo : v));
+
+    // CSS variables
+    state.cardBgOp      = Math.round(get(/--card-bg:\s*rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/, 0.97) * 100);
+    state.cardBorderOp  = Math.round(get(/--card-border:\s*rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/, 0.13) * 100);
+    state.cardBlur      = get(/--card-blur:\s*([\d.]+)px/, 22);
+    state.cardRadius    = get(/--card-radius:\s*([\d.]+)px/, 20);
+    state.cardPx        = get(/--card-padding-x:\s*([\d.]+)px/, 28);
+    state.cardPy        = get(/--card-padding-y:\s*([\d.]+)px/, 18);
+    state.cardWidth     = get(/--card-width:\s*([\d.]+)px/, 340);
+    state.cardHeight    = get(/--card-height:\s*([\d.]+)px/, 0);
+    state.imgOp         = Math.round(get(/--img-opacity:\s*([\d.]+)/, 0.24) * 100);
+    state.imgBlur       = get(/--img-blur:\s*([\d.]+)px/, 2);
+    state.artistOp      = Math.round(get(/--color-artist:\s*rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/, 0.58) * 100);
+    state.trackOp       = Math.round(get(/--color-track:\s*rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/, 0.69) * 100);
+    state.timerOp       = Math.round(get(/--color-timer:\s*rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/, 0.45) * 100);
+    state.barBgOp       = Math.round(get(/--color-bar-bg:\s*rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/, 0.13) * 100);
+    state.barFillOp     = Math.round(get(/--color-bar-fill:\s*rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/, 0.57) * 100);
+    state.marqueeSpeed  = get(/--marquee-speed:\s*([\d.]+)s/, 22);
+
+    // Text shadows — handle both "0 2px 6px" and "0 0px 8px" formats
+    const artistSh = html.match(/\.artist\s*\{[^}]*text-shadow:\s*[\d.]+px?\s+([\d.]+)px\s+([\d.]+)px\s+rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/s);
+    if (artistSh) { state.artistShadow = parseFloat(artistSh[2]); state.artistShadowOp = Math.round(parseFloat(artistSh[3]) * 100); }
+
+    const trackSh = html.match(/\.track\s*\{[^}]*text-shadow:\s*[\d.]+px?\s+([\d.]+)px\s+([\d.]+)px\s+rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/s);
+    if (trackSh) { state.trackShadow = parseFloat(trackSh[2]); state.trackShadowOp = Math.round(parseFloat(trackSh[3]) * 100); }
+
+    // Shadow spread — second shadow in stacked text-shadow
+    const artistSpread = html.match(/\.artist\s*\{[^}]*text-shadow:[^;]*,\s*0\s+0\s+([\d.]+)px\s+rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/s);
+    if (artistSpread) { state.artistSpread = parseFloat(artistSpread[1]); state.artistSpreadOp = Math.round(parseFloat(artistSpread[2]) * 100); }
+
+    const trackSpread = html.match(/\.track\s*\{[^}]*text-shadow:[^;]*,\s*0\s+0\s+([\d.]+)px\s+rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/s);
+    if (trackSpread) { state.trackSpread = parseFloat(trackSpread[1]); state.trackSpreadOp = Math.round(parseFloat(trackSpread[2]) * 100); }
+
+    // Marquee mask fade
+    const fade = html.match(/mask-image:\s*linear-gradient\([^,]+,\s*transparent\s+0%,\s*black\s+([\d.]+)%,\s*black\s+([\d.]+)%/);
+    if (fade) { state.fadeLeft = parseFloat(fade[1]); state.fadeRight = 100 - parseFloat(fade[2]); }
+
+    // CONFIG values
+    state.pollMs        = clamp(get(/POLL_MS:\s*([\d]+)/, 1000), 100, 10000);
+    state.imagesEnabled = /IMAGES:\s*true/.test(html);
+    // Card glass — missing/invalid CARD_BACKDROP_BLUR falls back to OFF (overlay default)
+    state.cardGlass     = getBool(/CARD_BACKDROP_BLUR:\s*(true|false)/, false);
+    state.visEnabled    = /VISUALIZER:\s*true/.test(html);
+    state.specPort      = clamp(get(/SPECTRUM_PORT:\s*([\d]+)/, 9001), 1, 65535);
+    state.visDepth      = clamp(get(/VIS_BAR_DEPTH:\s*([\d]+)/, 22), 0, 60);
+    state.visBlur       = clamp(get(/VIS_BLUR:\s*([\d]+)/, 12), 0, 40);
+    state.visBrightness = clamp(get(/VIS_BRIGHTNESS:\s*([\d.]+)/, 1.8), 1, 3);
+    state.visOpacity    = Math.round(clamp(get(/VIS_MAX_OPACITY:\s*([\d.]+)/, 0.93), 0, 1) * 100);
+    state.visBands      = clamp(get(/VIS_BANDS:\s*([\d]+)/, 44), 8, 128);
+    state.visSmoothing  = Math.round(clamp(get(/VIS_SMOOTHING:\s*([\d.]+)/, 0.25), 0, 1) * 100);
+    // Render-rate cap — clamp out-of-range (e.g. RENDER_FPS: 999) so import never crashes
+    state.renderFps     = clamp(get(/RENDER_FPS:\s*([\d]+)/, 24), 0, 60);
+
+    // Background FFT motion (one logical feature; BG_MOTION toggles the group)
+    state.bgMotion       = getBool(/BG_MOTION:\s*(true|false)/, false);
+    state.bgMotionBands  = clamp(get(/BG_MOTION_BANDS:\s*([\d]+)/, 6), 1, 32);
+    state.bgBaseBlur     = clamp(get(/BG_BASE_BLUR:\s*([\d.]+)/, 0.10), 0, 5);
+    state.bgBlurMaxAdd   = clamp(get(/BG_BLUR_MAX_ADD:\s*([\d.]+)/, 0.83), 0, 5);
+    state.bgZoomMaxAdd   = clamp(get(/BG_ZOOM_MAX_ADD:\s*([\d.]+)/, 0.40), 0, 5);
+    state.bgBaselineZoom = clamp(get(/BG_BASELINE_ZOOM:\s*([\d.]+)/, 0.025), 0, 1);
+    state.bgZoomSmooth   = clamp(get(/BG_ZOOM_SMOOTH:\s*([\d.]+)/, 0.032), 0, 1);
+    state.bgBlurSmooth   = clamp(get(/BG_BLUR_SMOOTH:\s*([\d.]+)/, 0.032), 0, 1);
+    state.bgDelaySmooth  = clamp(get(/BG_DELAY_SMOOTH:\s*([\d.]+)/, 0.020), 0, 1);
+    state.bgMicroSmooth  = clamp(get(/BG_MICRO_SMOOTH:\s*([\d.]+)/, 0.045), 0, 1);
+
+    syncAllInputs();
+    applyToMock();
+    updateOutput();
+    renderProfileList();
+    requestAnimationFrame(applyMockMarquee);
+
+    const btn = document.getElementById('btn-pull');
+    btn.classList.add('success');
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Pulled!`;
+    setTimeout(() => {
+      btn.classList.remove('success');
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Pull from file`;
+    }, 2000);
+
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+});
+
+// ── Generate Spotify HTML ──────────────────────────────────────
+function generateSpotifyHTML() {
+  const s = state;
+  const aSpreadStr = s.artistSpread > 0 ? `, 0 0 ${s.artistSpread}px rgba(0,0,0,${r(s.artistSpreadOp/100)})` : '';
+  const tSpreadStr = s.trackSpread  > 0 ? `, 0 0 ${s.trackSpread}px rgba(0,0,0,${r(s.trackSpreadOp/100)})`  : '';
+  const artistShadow = `0 1px ${s.artistShadow}px rgba(0,0,0,${r(s.artistShadowOp/100)})${aSpreadStr}`;
+  const trackShadow  = `0 1px ${s.trackShadow}px rgba(0,0,0,${r(s.trackShadowOp/100)})${tSpreadStr}`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Now Playing — Spotify</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --card-bg:         rgba(0, 0, 0, ${r(s.cardBgOp/100)});
+    --card-border:     rgba(255, 255, 255, ${r(s.cardBorderOp/100)});
+    --card-blur:       ${s.cardBlur}px;
+    --card-radius:     ${s.cardRadius}px;
+    --card-padding-x:  ${s.cardPx}px;
+    --card-padding-y:  ${s.cardPy}px;
+    --card-width:      ${s.cardWidth}px;
+    --card-height:     ${s.cardHeight > 0 ? s.cardHeight + 'px' : 'auto'};
+    --img-opacity:     ${r(s.imgOp/100)};
+    --img-blur:        ${s.imgBlur}px;
+    --img-scale:       1.06;
+    --color-artist:    rgba(255, 255, 255, ${r(s.artistOp/100)});
+    --color-track:     rgba(255, 255, 255, ${r(s.trackOp/100)});
+    --color-timer:     rgba(255, 255, 255, ${r(s.timerOp/100)});
+    --color-bar-bg:    rgba(255, 255, 255, ${r(s.barBgOp/100)});
+    --color-bar-fill:  rgba(255, 255, 255, ${r(s.barFillOp/100)});
+    --marquee-speed:   ${s.marqueeSpeed}s;
+    --font-artist: 'Syne', sans-serif;
+    --font-track:  'DM Sans', sans-serif;
+    --font-timer:  'DM Sans', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: transparent; display: flex; align-items: flex-start; justify-content: flex-start; padding: 16px; -webkit-font-smoothing: antialiased; }
+
+  .card-wrap { position: relative; border-radius: var(--card-radius); }
+  #vis-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; border-radius: var(--card-radius); filter: var(--vis-filter, blur(12px) brightness(1.6)); }
+
+  .card {
+    position: relative; overflow: hidden;
+    border-radius: var(--card-radius); border: 0.5px solid var(--card-border);
+    background: var(--card-bg);
+    /* backdrop-filter applied at runtime from CONFIG.CARD_BACKDROP_BLUR (see script) */
+    padding: var(--card-padding-y) var(--card-padding-x);
+    width: var(--card-width); height: var(--card-height);
+    flex-shrink: 0; display: flex; flex-direction: column; gap: 7px;
+    opacity: 0; transform: translateY(5px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+  .card.visible { opacity: 1; transform: translateY(0); }
+  .bg-layer { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+  /* transform/filter driven at runtime from bgBaseScale/bgBaseBlur (see script), not hard-coded here (FR-006) */
+  .bg-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.9s ease; will-change: transform, filter; }
+  .bg-img.active { opacity: var(--img-opacity); }
+  .content { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 7px; }
+  .marquee-clip { overflow: hidden; width: 100%; }
+  .marquee-clip.scrolling {
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black ${s.fadeLeft}%, black ${100-s.fadeRight}%, transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0%, black ${s.fadeLeft}%, black ${100-s.fadeRight}%, transparent 100%);
+  }
+  @keyframes marquee-bounce {
+    0%,10% { transform: translateX(0); }
+    45%,55% { transform: translateX(var(--marquee-offset)); }
+    90%,100% { transform: translateX(0); }
+  }
+  .marquee-clip.scrolling .inner { animation: marquee-bounce var(--marquee-speed) ease-in-out infinite; }
+  .artist { font-family: var(--font-artist); font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-artist); white-space: nowrap; text-shadow: ${artistShadow}; transition: opacity 0.15s ease; font-variant-numeric: lining-nums; }
+  .middle-row { display: flex; align-items: center; gap: 10px; }
+  .progress-bar { flex: 1; height: 2px; background: var(--color-bar-bg); border-radius: 2px; overflow: hidden; margin-left: auto; }
+  .progress-fill { height: 100%; width: 0%; background: var(--color-bar-fill); border-radius: 2px; transition: width 1s linear; }
+  .timer { font-family: var(--font-timer); font-size: 11px; font-weight: 300; letter-spacing: 0.05em; color: var(--color-timer); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; text-shadow: ${artistShadow}; }
+  .track { font-family: var(--font-track); font-size: 16px; font-weight: 500; color: var(--color-track); white-space: nowrap; text-shadow: ${trackShadow}; transition: opacity 0.15s ease; }
+  .fade-out { opacity: 0 !important; }
+</style>
+</head>
+<body>
+<div class="card-wrap" id="card-wrap">
+  <canvas id="vis-canvas"></canvas>
+  <div class="card" id="card">
+    <div class="bg-layer">
+      <img class="bg-img" id="bg-a" src="" alt="" decoding="async">
+      <img class="bg-img" id="bg-b" src="" alt="" decoding="async">
+    </div>
+    <div class="content">
+      <div class="marquee-clip" id="artist-clip"><div class="inner artist" id="artist">Artist</div></div>
+      <div class="middle-row">
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="timer" id="timer">0:00 / 0:00</div>
+      </div>
+      <div class="marquee-clip" id="track-clip"><div class="inner track" id="track">Track Title</div></div>
+    </div>
+  </div>
+</div>
+<script>
+const CONFIG = {
+  // ── METADATA ADAPTER (Spotify) ── start
+  //   Supplies now-playing data + album art. Reference uses Beefweb here.
+  ENDPOINT:     'http://localhost:8081/api/spotify/current',  // 8081 = server serve port (8082 is OAuth callback only)
+  ALBUM_ART_BG: ${s.albumArtEnabled},  // Spotify album art as card background; mutually exclusive with IMAGES; default off so defaults match the reference
+  VIS_GAIN:     ${s.visGain.toFixed(1)},    // static visualizer gain — Spotify exposes no playback volume, so this replaces the reference's dynamic gain
+  // ── METADATA ADAPTER (Spotify) ── end
+  POLL_MS:   ${s.pollMs},
+  DEMO_MODE: false,
+  IMAGES:    ${s.spotifyImagesEnabled},
+
+  // ── CARD GLASS (backdrop-filter) ─────────────────────────────
+  // Frosted-glass blur behind the card. OFF by default for gaming
+  // streams: it re-blurs the full card backdrop every frame the scene
+  // behind the overlay changes — the overlay's heaviest GPU cost
+  // (audit finding F-017). Turn ON for music-specific streams or larger
+  // overlay cards where the glass actually reads. Radius = --card-blur (22px).
+  CARD_BACKDROP_BLUR: ${s.cardGlass},
+
+  // ── VISUALIZER ────────────────────────────────────────────────
+  //  Connects to spectrum-server.py (ws://localhost:9001) and
+  //  drives the border visualizer with real FFT frequency data.
+  //
+  //  SETUP:
+  //  Run spectrum-server.py before launching OBS.
+  //
+  VISUALIZER:        ${s.visEnabled},
+  SPECTRUM_PORT:     ${s.specPort},
+  VIS_COLOR:         '255, 255, 255',
+  VIS_MAX_OPACITY:   ${r(s.visOpacity/100)},
+  VIS_BAR_DEPTH:     ${s.visDepth},
+  VIS_BLUR:          ${s.visBlur},
+  VIS_BRIGHTNESS:    ${s.visBrightness},     // post-blur brightness multiplier — restores glow intensity lost to CSS blur spread
+  VIS_SMOOTHING:     ${r(s.visSmoothing/100)},
+  VIS_BANDS:         ${s.visBands},
+
+  // ── BACKGROUND FFT MOTION (independent from visualizer) ──────
+  // Separate smoothing/band logic from the visualizer.
+  // This only affects the background image and does not touch the
+  // existing glow/visualizer system in any way.
+  BG_MOTION: ${s.bgMotion},
+  BG_MOTION_BANDS: ${s.bgMotionBands},          // group server FFT into broad bands
+  BG_BASE_BLUR: ${s.bgBaseBlur},          // extra blur always present on top of --img-blur
+  BG_BLUR_MAX_ADD: ${s.bgBlurMaxAdd},       // FFT blur modulation stays very small
+  BG_ZOOM_MAX_ADD: ${s.bgZoomMaxAdd},      // ~1.8% max extra zoom from FFT
+  BG_BASELINE_ZOOM: ${s.bgBaselineZoom},    // slow continuous "breathing"
+  BG_ZOOM_SMOOTH: ${s.bgZoomSmooth},       // slow inertia for cinematic zoom
+  BG_BLUR_SMOOTH: ${s.bgBlurSmooth},       // slightly faster inertia for blur
+  BG_DELAY_SMOOTH: ${s.bgDelaySmooth},      // intentional lag vs foreground glow
+  BG_MICRO_SMOOTH: ${s.bgMicroSmooth},      // heavily smoothed high-band micro motion
+
+  // ── RENDER RATE CAP ──────────────────────────────────────────
+  // Caps how often the canvas is redrawn and bg motion is updated.
+  // Server sends FFT data at 30 FPS, so anything above 30 just
+  // re-renders the same data. Lower = less CPU. Set to 0 for uncapped.
+  RENDER_FPS: ${s.renderFps},
+};
+
+// ── Elements ───────────────────────────────────────────────────
+const cardWrap  = document.getElementById('card-wrap');
+const card      = document.getElementById('card');
+const elArtist  = document.getElementById('artist');
+const elTrack   = document.getElementById('track');
+const elTimer   = document.getElementById('timer');
+const elFill    = document.getElementById('progress-fill');
+const bgA       = document.getElementById('bg-a');
+const bgB       = document.getElementById('bg-b');
+const artistClip= document.getElementById('artist-clip');
+const trackClip = document.getElementById('track-clip');
+
+let imgQueue = [], allImages = [], activeLayer = 'a', lastTitle = '';
+let visGain  = 1.0;
+
+// ── METADATA ADAPTER (Spotify) ── start
+//   Spotify-specific state + static visualizer gain. Reference uses a
+//   volume-derived dynamic visGain here; Spotify has no volume, so VIS_GAIN
+//   is a user-set static multiplier. Track identity is keyed off the Spotify
+//   track id; playback position is interpolated between polls.
+let lastTrackId    = '';
+let lastProgressMs = 0;
+let lastProgressAt = 0;
+let isPlaying      = false;
+visGain = CONFIG.VIS_GAIN;   // static gain; engine's connectSpectrum reads visGain unchanged
+// ── METADATA ADAPTER (Spotify) ── end
+
+// (#1) Apply VIS_BLUR + VIS_BRIGHTNESS as a chained CSS filter (GPU-composited)
+document.getElementById('vis-canvas').style.setProperty(
+  '--vis-filter',
+  \`blur(\${CONFIG.VIS_BLUR}px) brightness(\${CONFIG.VIS_BRIGHTNESS})\`
+);
+
+// Card glass blur — operator toggle. When on, reproduces the baseline
+// backdrop-filter exactly (radius read from --card-blur); when off, no
+// backdrop pass at all. Missing/invalid flag falls back to off.
+if (CONFIG.CARD_BACKDROP_BLUR) {
+  const cardBlur = getComputedStyle(document.documentElement)
+    .getPropertyValue('--card-blur').trim() || '22px';
+  card.style.setProperty('backdrop-filter', \`blur(\${cardBlur})\`);
+  card.style.setProperty('-webkit-backdrop-filter', \`blur(\${cardBlur})\`);
+}
+
+// (#4) Cache card radius — never changes at runtime
+const cachedCardRadius = parseFloat(getComputedStyle(document.documentElement)
+  .getPropertyValue('--card-radius')) || 20;
+
+// (#5) Parse VIS_COLOR once
+const [VIS_CR, VIS_CG, VIS_CB] = CONFIG.VIS_COLOR.split(',').map(s => s.trim());
+
+// (#7) Read base CSS values for bg-img once for direct style writes
+const bgBaseScale = parseFloat(getComputedStyle(document.documentElement)
+  .getPropertyValue('--img-scale')) || 1.06;
+const bgBaseBlur  = parseFloat(getComputedStyle(document.documentElement)
+  .getPropertyValue('--img-blur'))  || 1;
+
+// (#8) Visibility tracking for rAF pause
+let cardVisible = false;
+let rafId       = null;
+
+// ── Images ─────────────────────────────────────────────────────
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function nextImage() {
+  if (!CONFIG.IMAGES || !allImages.length) return;
+  if (!imgQueue.length) imgQueue = shuffle(allImages);
+  const src      = imgQueue.pop();
+  const incoming = activeLayer === 'a' ? bgB : bgA;
+  const outgoing = activeLayer === 'a' ? bgA : bgB;
+  incoming.src = src;
+  incoming.onload = () => {
+    incoming.classList.add('active');
+    outgoing.classList.remove('active');
+    activeLayer = activeLayer === 'a' ? 'b' : 'a';
+  };
+}
+
+async function loadImageList() {
+  if (!CONFIG.IMAGES) return;
+  try {
+    const res   = await fetch('http://localhost:8081/bg-list', { cache: 'no-store' });
+    const files = await res.json();
+    if (!files.length) return;
+    allImages = files;
+    imgQueue  = shuffle(allImages);
+    const first = imgQueue.pop();
+    bgA.src = first;
+    bgA.onload = () => bgA.classList.add('active');
+  } catch (_) {}
+}
+
+loadImageList();
+
+// ── Marquee ─────────────────────────────────────────────────────
+function applyMarquee(clip, inner) {
+  clip.classList.remove('scrolling');
+  inner.style.removeProperty('--marquee-offset');
+  clip.style.webkitMaskImage = '';
+  clip.style.maskImage = '';
+  requestAnimationFrame(() => {
+    const overflow = inner.scrollWidth - clip.clientWidth;
+    if (overflow > 2) {
+      inner.style.setProperty('--marquee-offset', \`-\${overflow}px\`);
+      clip.classList.add('scrolling');
+    }
+  });
+}
+
+// ── Helpers ─────────────────────────────────────────────────────
+function fmtTime(s) {
+  s = Math.max(0, Math.floor(s));
+  return Math.floor(s / 60) + ':' + (s % 60).toString().padStart(2, '0');
+}
+
+// ── METADATA ADAPTER (Spotify) ── start
+//   Album-art-as-background crossfade + the Spotify UI update. These feed the
+//   SAME engine entry points the reference's data path feeds (the bg-a/bg-b
+//   crossfade layers, the card text setters, the marquee, the rAF loop) — they
+//   do not fork the rendering engine. Reference supplies these from Beefweb.
+
+// Album art → engine background slot. Rides the same bg-a/bg-b crossfade
+// layers (and decoding="async") IMAGES uses, so it shares the async-decode
+// path. Mutually exclusive with the local-bg IMAGES source.
+function setAlbumArt(url) {
+  if (!CONFIG.ALBUM_ART_BG || !url) return;
+  const incoming = activeLayer === 'a' ? bgB : bgA;
+  const outgoing = activeLayer === 'a' ? bgA : bgB;
+  incoming.src = url;
+  incoming.onload = () => {
+    incoming.classList.add('active');
+    outgoing.classList.remove('active');
+    activeLayer = activeLayer === 'a' ? 'b' : 'a';
+  };
+}
+
+// ── UI update ───────────────────────────────────────────────────
+// Spotify shape: trackId-keyed new-track detection, ms timings, album art.
+function updateUI({ trackId, artist, title, artUrl, progressMs, durationMs, playing }) {
+  const isNewTrack = trackId !== lastTrackId;
+  if (isNewTrack) {
+    elArtist.classList.add('fade-out');
+    elTrack.classList.add('fade-out');
+    setTimeout(() => {
+      elArtist.textContent = artist || '—';
+      elTrack.textContent  = title  || '—';
+      elArtist.classList.remove('fade-out');
+      elTrack.classList.remove('fade-out');
+      applyMarquee(artistClip, elArtist);
+      applyMarquee(trackClip,  elTrack);
+    }, 160);
+    setAlbumArt(artUrl);
+    nextImage();
+    lastTrackId = trackId;
+  }
+
+  // Progress interpolation between polls (Spotify polls ~1/s)
+  lastProgressMs = progressMs;
+  lastProgressAt = Date.now();
+  isPlaying      = playing;
+
+  // fmtTime() (shared engine) takes SECONDS — convert from Spotify ms
+  elTimer.textContent = fmtTime(progressMs / 1000) + ' / ' + fmtTime(durationMs / 1000);
+  elFill.style.width  = durationMs > 0 ? Math.min(100, (progressMs / durationMs) * 100) + '%' : '0%';
+
+  // (#8) Track visibility and start/stop rAF loop
+  if (!cardVisible) {
+    cardVisible = true;
+    card.classList.add('visible');
+    startAnimationLoop();
+  }
+}
+// ── METADATA ADAPTER (Spotify) ── end
+
+// (#8) Hide card and stop rAF when nothing is playing
+function hideCard() {
+  if (cardVisible) {
+    cardVisible = false;
+    card.classList.remove('visible');
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+  }
+}
+
+// ── Background FFT motion (independent system) ─────────────────
+// Separate FFT consumer for background image only.
+// - Groups incoming FFT into broad bands
+// - Shapes signal with a curve to soften low-level chatter
+// - Uses delayed targets + inertia so motion trails behind glow
+
+const BG_BAND_GROUPS = CONFIG.BG_MOTION_BANDS;
+const bgGroupedBands = new Array(BG_BAND_GROUPS).fill(0);
+let bgDelayedLow  = 0, bgDelayedMid  = 0, bgDelayedHigh = 0;
+let bgZoomValue   = 1, bgBlurValue   = CONFIG.BG_BASE_BLUR, bgMicroValue = 0;
+const bgEnabled   = CONFIG.IMAGES && CONFIG.BG_MOTION;
+
+// Soft shaping to reduce chatter/spikes and keep motion subtle
+function bgShape(v) {
+  const clamped = Math.max(0, Math.min(1, v));
+  return Math.pow(clamped, 1.55);
+}
+
+// Group server bands into broad bands
+function bgRegroup(src) {
+  if (!bgEnabled || !Array.isArray(src) || !src.length) return;
+  for (let i = 0; i < BG_BAND_GROUPS; i++) {
+    const start = Math.floor(i * src.length / BG_BAND_GROUPS);
+    const end   = Math.max(start + 1, Math.floor((i + 1) * src.length / BG_BAND_GROUPS));
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += src[j] || 0;
+    bgGroupedBands[i] = sum / (end - start);
+  }
+}
+
+function bgAnimate(t) {
+  if (!bgEnabled) return;
+
+  // Broad frequency mapping:
+  // - bass drives slow zoom
+  // - mids drive blur
+  // - highs add tiny, heavily-smoothed micro-variation
+  const lowRaw  = (bgGroupedBands[0] * 0.72) + (bgGroupedBands[1] * 0.28);
+  const midRaw  = (bgGroupedBands[2] * 0.55) + (bgGroupedBands[3] * 0.45);
+  const highRaw = (bgGroupedBands[4] * 0.45) + (bgGroupedBands[5] * 0.55);
+
+  // Shape + soft clamp so peaks do not snap the image
+  const lowTarget  = Math.min(0.95, bgShape(lowRaw));
+  const midTarget  = Math.min(0.85, bgShape(midRaw) * 0.9);
+  const highTarget = Math.min(0.70, bgShape(highRaw) * 0.7);
+
+  // Intentional response delay: background trails the foreground glow
+  bgDelayedLow  += (lowTarget  - bgDelayedLow)  * CONFIG.BG_DELAY_SMOOTH;
+  bgDelayedMid  += (midTarget  - bgDelayedMid)  * (CONFIG.BG_DELAY_SMOOTH * 1.15);
+  bgDelayedHigh += (highTarget - bgDelayedHigh) * (CONFIG.BG_DELAY_SMOOTH * 0.9);
+
+  // Slow baseline breathing independent of FFT
+  const baselineZoom = 1 + CONFIG.BG_BASELINE_ZOOM * (0.5 + 0.5 * Math.sin(t * 0.16));
+
+  // Tiny high-band variation, smoothed enough to avoid visual noise
+  bgMicroValue += (bgDelayedHigh - bgMicroValue) * CONFIG.BG_MICRO_SMOOTH;
+
+  // Map FFT → zoom/blur
+  const zoomTarget = baselineZoom + (bgDelayedLow * CONFIG.BG_ZOOM_MAX_ADD) + (bgMicroValue * 0.0015);
+  const blurTarget = CONFIG.BG_BASE_BLUR + (bgDelayedMid * CONFIG.BG_BLUR_MAX_ADD) + (bgMicroValue * 0.06);
+
+  // Inertia smoothing — zoom is slower than blur so it feels deeper/heavier
+  bgZoomValue += (zoomTarget - bgZoomValue) * CONFIG.BG_ZOOM_SMOOTH;
+  bgBlurValue += (blurTarget - bgBlurValue) * CONFIG.BG_BLUR_SMOOTH;
+
+  // (#7) Write directly to active bg-img elements, bypassing CSS variable resolution
+  const finalScale = bgBaseScale * bgZoomValue;
+  const finalBlur  = bgBaseBlur + bgBlurValue;
+  const transformStr = \`scale(\${finalScale})\`;
+  const filterStr    = \`blur(\${finalBlur}px)\`;
+
+  if (bgA.classList.contains('active')) {
+    bgA.style.transform = transformStr;
+    bgA.style.filter    = filterStr;
+  }
+  if (bgB.classList.contains('active')) {
+    bgB.style.transform = transformStr;
+    bgB.style.filter    = filterStr;
+  }
+}
+
+// ── Visualizer ─────────────────────────────────────────────────
+const visCanvas  = document.getElementById('vis-canvas');
+const visCtx     = visCanvas.getContext('2d');
+const VIS_BANDS  = CONFIG.VIS_BANDS;
+const visBands   = new Float64Array(VIS_BANDS);  // smoothed
+const visRaw     = new Float64Array(VIS_BANDS);  // raw from WebSocket
+
+// (#9) Precomputed band positions — recalculated on resize only
+let bandPositions = null;  // [{x, y, nx, ny}, ...]
+let cachedBarW    = 3;
+
+function computeBandPositions() {
+  const W = visCanvas.width;
+  const H = visCanvas.height;
+  const R = cachedCardRadius;
+  const straightW = W - 2 * R;
+  const straightH = H - 2 * R;
+  const perimeter = 2 * straightW + 2 * straightH + Math.PI * 2 * R;
+  const bandStep  = perimeter / VIS_BANDS;
+
+  cachedBarW = Math.max(3, bandStep * 1.2);
+  bandPositions = new Array(VIS_BANDS);
+
+  for (let i = 0; i < VIS_BANDS; i++) {
+    const dist = i * bandStep + bandStep * 0.5;
+    let x, y, nx, ny;
+
+    if (dist < straightW) {
+      x = R + dist; y = 0; nx = 0; ny = 1;
+    } else if (dist < straightW + Math.PI * 0.5 * R) {
+      const a = (dist - straightW) / R;
+      x = W - R + Math.sin(a) * R; y = R - Math.cos(a) * R;
+      nx = -Math.sin(a); ny = -Math.cos(a);
+    } else if (dist < straightW + Math.PI * 0.5 * R + straightH) {
+      const d = dist - straightW - Math.PI * 0.5 * R;
+      x = W; y = R + d; nx = -1; ny = 0;
+    } else if (dist < straightW + Math.PI * R + straightH) {
+      const a = (dist - straightW - Math.PI * 0.5 * R - straightH) / R;
+      x = W - R + Math.cos(a) * R; y = H - R + Math.sin(a) * R;
+      nx = -Math.cos(a); ny = -Math.sin(a);
+    } else if (dist < 2 * straightW + Math.PI * R + straightH) {
+      const d = dist - straightW - Math.PI * R - straightH;
+      x = W - R - d; y = H; nx = 0; ny = -1;
+    } else if (dist < 2 * straightW + Math.PI * 1.5 * R + straightH) {
+      const a = (dist - 2 * straightW - Math.PI * R - straightH) / R;
+      x = R - Math.sin(a) * R; y = H - R + Math.cos(a) * R;
+      nx = Math.sin(a); ny = -Math.cos(a);
+    } else if (dist < 2 * straightW + Math.PI * 1.5 * R + 2 * straightH) {
+      const d = dist - 2 * straightW - Math.PI * 1.5 * R - straightH;
+      x = 0; y = H - R - d; nx = 1; ny = 0;
+    } else {
+      const a = (dist - 2 * straightW - Math.PI * 1.5 * R - 2 * straightH) / R;
+      x = R - Math.cos(a) * R; y = R - Math.sin(a) * R;
+      nx = Math.cos(a); ny = Math.sin(a);
+    }
+
+    bandPositions[i] = { x, y, nx, ny };
+  }
+}
+
+// Size canvas to match card
+function visResize() {
+  visCanvas.width  = cardWrap.offsetWidth;
+  visCanvas.height = cardWrap.offsetHeight;
+  computeBandPositions();
+}
+visResize();
+window.addEventListener('resize', visResize);
+
+function visDraw() {
+  const W     = visCanvas.width;
+  const H     = visCanvas.height;
+  const depth = CONFIG.VIS_BAR_DEPTH;
+
+  visCtx.clearRect(0, 0, W, H);
+  // (#1) No ctx.filter — blur is handled by CSS on the canvas element
+
+  // Smooth bands — snappy attack, gentle decay
+  for (let i = 0; i < VIS_BANDS; i++) {
+    const target = visRaw[i];
+    const rate   = target > visBands[i]
+      ? CONFIG.VIS_SMOOTHING * 4
+      : CONFIG.VIS_SMOOTHING;
+    visBands[i] += (target - visBands[i]) * rate;
+  }
+
+  // (#6) Reuse line settings across all bands
+  visCtx.lineCap = 'round';
+  visCtx.lineWidth = cachedBarW;
+
+  for (let i = 0; i < VIS_BANDS; i++) {
+    if (visBands[i] < 0.005) continue;
+
+    const pos   = bandPositions[i];
+    const barH  = visBands[i] * depth;
+    const alpha = visBands[i] * CONFIG.VIS_MAX_OPACITY;
+    const endX  = pos.x + pos.nx * barH;
+    const endY  = pos.y + pos.ny * barH;
+
+    // (#6) Gradient with pre-parsed color channels — (#10) no .toFixed()
+    const grad = visCtx.createLinearGradient(pos.x, pos.y, endX, endY);
+    grad.addColorStop(0,   \`rgba(\${VIS_CR},\${VIS_CG},\${VIS_CB},\${alpha})\`);
+    grad.addColorStop(0.4, \`rgba(\${VIS_CR},\${VIS_CG},\${VIS_CB},\${alpha * 0.6})\`);
+    grad.addColorStop(1,   \`rgba(\${VIS_CR},\${VIS_CG},\${VIS_CB},0)\`);
+
+    visCtx.beginPath();
+    visCtx.strokeStyle = grad;
+    visCtx.moveTo(pos.x, pos.y);
+    visCtx.lineTo(endX, endY);
+    visCtx.stroke();
+  }
+}
+
+// ── (#2) Single rAF loop ────────────────────────────────────────
+// Frame interval for the render rate cap. 0 = uncapped (run at browser rAF rate).
+const FRAME_INTERVAL_MS = CONFIG.RENDER_FPS > 0 ? 1000 / CONFIG.RENDER_FPS : 0;
+let   lastFrameTime     = 0;
+
+function animationLoop() {
+  rafId = requestAnimationFrame(animationLoop);
+
+  const now = performance.now();
+  // Gate: skip work if not enough time has elapsed since last render.
+  // The 0.5ms epsilon prevents missing frames due to rAF/vsync alignment.
+  if (FRAME_INTERVAL_MS > 0 && (now - lastFrameTime) < (FRAME_INTERVAL_MS - 0.5)) return;
+  lastFrameTime = now;
+
+  const t = now * 0.001;
+
+  // Background motion (uses its own config/state/smoothing)
+  bgAnimate(t);
+
+  // Visualizer canvas draw
+  if (CONFIG.VISUALIZER) visDraw();
+}
+
+// (#8) Start/stop helpers
+function startAnimationLoop() {
+  if (rafId === null) {
+    lastFrameTime = 0;  // ensure first frame after restart renders immediately
+    rafId = requestAnimationFrame(animationLoop);
+  }
+}
+
+// ── (#3) Shared WebSocket connection ────────────────────────────
+function connectSpectrum() {
+  if (!CONFIG.VISUALIZER && !bgEnabled) return;
+
+  const ws = new WebSocket(\`ws://localhost:\${CONFIG.SPECTRUM_PORT}\`);
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (!Array.isArray(data)) return;
+
+      // Feed visualizer (own gain)
+      if (CONFIG.VISUALIZER) {
+        for (let i = 0; i < VIS_BANDS; i++) {
+          const idx = Math.floor(i * data.length / VIS_BANDS);
+          visRaw[i] = Math.min(1, (data[idx] || 0) * visGain);
+        }
+      }
+
+      // Feed background motion (broad bands, own regroup/shaping)
+      bgRegroup(data);
+    } catch (_) {}
+  };
+
+  ws.onclose = () => setTimeout(connectSpectrum, 3000);
+  ws.onerror = () => {};
+}
+
+// ── METADATA ADAPTER (Spotify) ── start
+//   Poll api/spotify/current, parse the Spotify currently-playing shape, and
+//   interpolate progress between polls. Reference polls Beefweb here. Degraded
+//   states ({"is_playing":false} / errors) hide the card via the shared hideCard().
+
+// ── Fetch ───────────────────────────────────────────────────────
+async function fetchNowPlaying() {
+  try {
+    const res  = await fetch(CONFIG.ENDPOINT, { cache: 'no-store' });
+    const data = await res.json();
+    if (!data.is_playing && !data.item) { hideCard(); isPlaying = false; return; }
+    const item = data.item;
+    updateUI({
+      trackId:    item.id,
+      artist:     item.artists?.map(a => a.name).join(', ') || '—',
+      title:      item.name || '—',
+      artUrl:     item.album?.images?.[0]?.url || '',
+      progressMs: data.progress_ms || 0,
+      durationMs: item.duration_ms || 0,
+      playing:    data.is_playing,
+    });
+  } catch (_) { hideCard(); isPlaying = false; }
+}
+
+// Smooth timer tick — interpolate the position locally between polls
+function tickTimer() {
+  if (!isPlaying || lastProgressAt === 0) return;
+  const current = lastProgressMs + (Date.now() - lastProgressAt);
+  elTimer.textContent = fmtTime(current / 1000) + ' / ' + elTimer.textContent.split(' / ')[1];
+}
+setInterval(tickTimer, 250);
+
+// ── Demo mode ──────────────────────────────────────────────────
+const DEMO_TRACKS = [
+  { id: '1', artist: 'Floating Points', title: 'LesAlpx',        duration: 272000 },
+  { id: '2', artist: 'Burial',          title: 'Archangel',      duration: 196000 },
+  { id: '3', artist: 'Four Tet',        title: 'Angel Echoes',   duration: 263000 },
+  { id: '4', artist: 'Jon Hopkins',     title: 'Open Eye Signal', duration: 475000 },
+];
+let demoIdx = 0, demoPos = 0;
+
+function runDemo() {
+  const t = DEMO_TRACKS[demoIdx];
+  updateUI({ trackId: t.id, artist: t.artist, title: t.title, artUrl: '',
+             progressMs: demoPos, durationMs: t.duration, playing: true });
+  demoPos += 1000;
+  if (demoPos >= t.duration) { demoPos = 0; demoIdx = (demoIdx + 1) % DEMO_TRACKS.length; }
+}
+
+if (CONFIG.DEMO_MODE) {
+  runDemo();
+  setInterval(runDemo, CONFIG.POLL_MS);
+} else {
+  fetchNowPlaying();
+  setInterval(fetchNowPlaying, CONFIG.POLL_MS);
+}
+// ── METADATA ADAPTER (Spotify) ── end
+
+// ── Initialize bg-img baseline (#7) ─────────────────────────────
+// Set initial transform/filter directly so images don't start unstyled
+const initTransform = \`scale(\${bgBaseScale})\`;
+const initFilter    = \`blur(\${bgBaseBlur + CONFIG.BG_BASE_BLUR}px)\`;
+bgA.style.transform = initTransform;
+bgA.style.filter    = initFilter;
+bgB.style.transform = initTransform;
+bgB.style.filter    = initFilter;
+
+// ── Start spectrum connection ───────────────────────────────────
+connectSpectrum();
+<\/script>
+</body>
+</html>`;
+}
+
+// ── Sync LEDs (Meter Bridge signature) ─────────────────────────
+// Non-slider controls (toggles/selects) the bindRange map doesn't cover.
+Object.assign(CTRL_KEYS, {
+  'images-enabled': 'imagesEnabled', 'vis-enabled': 'visEnabled',
+  'card-glass': 'cardGlass', 'bg-motion': 'bgMotion',
+  'album-art-enabled': 'albumArtEnabled', 'spotify-images-enabled': 'spotifyImagesEnabled',
+  'poll-ms': 'pollMs', 'spec-device': 'specDevice',
+});
+
+// Give every section header an LED.
+document.querySelectorAll('.section-title').forEach(t => {
+  const led = document.createElement('span');
+  led.className = 'sync-led';
+  led.title = 'Group matches the overlay default';
+  t.insertBefore(led, t.firstChild);
+});
+
+// Green when every control in a group matches DEFAULTS; amber if any deviates.
+function updateSyncLeds() {
+  document.querySelectorAll('.section').forEach(section => {
+    const led = section.querySelector('.sync-led');
+    if (!led) return;
+    let armed = false;
+    section.querySelectorAll('input[id], select[id]').forEach(inp => {
+      const key = CTRL_KEYS[inp.id];
+      if (key == null || !(key in DEFAULTS)) return;
+      if (state[key] !== DEFAULTS[key]) armed = true;
+    });
+    led.classList.toggle('armed', armed);
+    led.title = armed ? 'Armed — a control here deviates from the overlay default'
+                      : 'Group matches the overlay default';
+  });
+}
+// Recompute LEDs whenever output refreshes (covers every control change path).
+const _updateOutput = updateOutput;
+updateOutput = function () { _updateOutput(); updateSyncLeds(); };
+
+loadAutosave();
+syncAllInputs();
+applyToMock();
+updateOutput();
+renderProfileList();
+requestAnimationFrame(applyMockMarquee);
+</script>
+</body>
+</html>
