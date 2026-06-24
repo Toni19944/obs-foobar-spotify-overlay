@@ -18,15 +18,35 @@ from typing import Callable, Optional
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtWidgets import (
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
+from PySide6.QtWebEngineCore import (
+    QWebEngineDownloadRequest,
+    QWebEnginePage,
+    QWebEngineProfile,
+    QWebEngineSettings,
+)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from . import appdata_dir, asset_path
 from .settings import AppSettings
+
+
+# The configurator's Save buttons trigger blob downloads with these exact
+# filenames (``a.download`` in configurator.html). Each maps to the REAL carried
+# asset that OBS / the spectrum shim actually read from disk, so "Save" overwrites
+# the live file instead of dropping an orphan copy in the OS Downloads folder.
+# Overlay HTML is file-served by overlay-server.ps1; spectrum-server.py is run via
+# runpy.run_path off disk (spectrum_shim) — so overwriting these takes effect on
+# the next OBS Browser-Source refresh / spectrum restart.
+_DOWNLOAD_TARGETS = {
+    "nowplaying-overlay.html": ("nowplaying-overlay.html",),
+    "nowplaying-spotify.html": ("Now-Playing-Spotify", "nowplaying-spotify.html"),
+    "spectrum-server.py": ("spectrum-server.py",),
+}
 
 
 # JS that reads the configurator's current glow/bg-motion flags.
@@ -72,6 +92,10 @@ class ConfiguratorHost(QWidget):
         self._profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )
+        # Route the configurator's "Save …" blob downloads onto the real carried
+        # assets so OBS actually updates (otherwise QtWebEngine has no download
+        # handler and the click is silently dropped).
+        self._profile.downloadRequested.connect(self._on_download)
 
         self._layout = QVBoxLayout(self)
 
@@ -105,6 +129,16 @@ class ConfiguratorHost(QWidget):
     def _create_view(self) -> None:
         self._placeholder.hide()
         page = QWebEnginePage(self._profile, self)
+        # Let the "Copy CSS" / "Copy HTML" buttons reach the clipboard. QtWebEngine
+        # blocks JS clipboard access by default, so navigator.clipboard.writeText
+        # would otherwise never resolve and the button never flips to "Copied!".
+        settings = page.settings()
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True
+        )
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.JavascriptCanPaste, True
+        )
         self._view = QWebEngineView(self)
         self._view.setPage(page)
         self._view.load(QUrl.fromLocalFile(str(asset_path("configurator.html"))))
@@ -128,6 +162,48 @@ class ConfiguratorHost(QWidget):
             view.deleteLater()
         self._btn_popout.setVisible(False)
         self._placeholder.show()
+
+    # ── downloads → real carried assets ────────────────────────────
+    def _on_download(self, download: QWebEngineDownloadRequest) -> None:
+        """Redirect a known Save-button download onto its live asset on disk."""
+        name = download.suggestedFileName() or download.downloadFileName()
+        target = _DOWNLOAD_TARGETS.get(name)
+        if target is None:
+            # Unknown download — keep Qt's default (to the Downloads folder).
+            download.accept()
+            return
+        dest = asset_path(*target)
+        download.setDownloadDirectory(str(dest.parent))
+        download.setDownloadFileName(dest.name)
+        download.isFinishedChanged.connect(
+            lambda d=download, p=dest: self._on_download_finished(d, p)
+        )
+        download.accept()
+
+    def _on_download_finished(self, download: QWebEngineDownloadRequest, dest) -> None:
+        state = download.state()
+        if state == QWebEngineDownloadRequest.DownloadState.DownloadCompleted:
+            if dest.name == "spectrum-server.py":
+                extra = "Stop, then Start the overlay to apply the new spectrum settings."
+            else:
+                extra = (
+                    "In OBS, refresh the overlay's Browser Source (or switch scenes) "
+                    "to load the new look."
+                )
+            QMessageBox.information(
+                self,
+                "Saved",
+                f"Saved to:\n{dest}\n\n{extra}",
+            )
+        elif state in (
+            QWebEngineDownloadRequest.DownloadState.DownloadCancelled,
+            QWebEngineDownloadRequest.DownloadState.DownloadInterrupted,
+        ):
+            QMessageBox.warning(
+                self,
+                "Save failed",
+                f"Could not write:\n{dest}\n\nThe file may be read-only or locked.",
+            )
 
     # ── pop-out sliders window (FR-013/014 / G6) ───────────────────
     def pop_out(self) -> None:
