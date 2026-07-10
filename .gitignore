@@ -6,8 +6,11 @@ __pycache__/
 venv/
 env/
 
-# Never commit binary archives
+# Never commit binary archives or local build output
 *.zip
+build/
+dist/
+*.manifest
 
 # OS / editor noise
 Thumbs.db
