@@ -6,12 +6,7 @@ __pycache__/
 venv/
 env/
 
-# PyInstaller build artifacts (feature 008 single-exe build)
-build/
-dist/
-*.manifest
-
-# Release packaging output (binary ships as a release asset, never committed)
+# Never commit binary archives
 *.zip
 
 # OS / editor noise
