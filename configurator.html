@@ -646,24 +646,6 @@
   .profile-btn:hover { color: var(--text); }
   .profile-btn.del:hover { color: #f87171; }
 
-  .mode-btn {
-    background: transparent;
-    border: none;
-    color: var(--muted);
-    font-family: 'DM Sans', sans-serif;
-    font-size: 12px;
-    padding: 5px 12px;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-  }
-  .mode-btn.active {
-    background: var(--accent);
-    color: #fff;
-  }
-  .mode-btn:hover:not(.active) {
-    color: var(--text);
-  }
-
   .autosave-note {
     font-size: 11px;
     color: var(--muted);
@@ -687,13 +669,6 @@
 <header>
   <div class="logo">now playing <span>configurator</span></div>
   <div class="header-actions">
-    <div style="display:flex;align-items:center;gap:8px;margin-right:8px;padding-right:12px;border-right:0.5px solid rgba(255,255,255,0.1);">
-      <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Mode</span>
-      <div style="display:flex;border:0.5px solid rgba(255,255,255,0.15);border-radius:6px;overflow:hidden;">
-        <button id="mode-foobar" class="mode-btn active" onclick="setMode('foobar')">foobar2000</button>
-        <button id="mode-spotify" class="mode-btn" onclick="setMode('spotify')">Spotify</button>
-      </div>
-    </div>
     <button class="btn" id="btn-pull">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Pull from file
@@ -821,33 +796,6 @@
           <input type="checkbox" id="bg-motion">
           <span class="toggle-track"></span>
         </label>
-      </div>
-
-      <!-- Spotify mode only -->
-      <div id="spotify-album-row" class="toggle-row" style="display:none;">
-        <span class="toggle-label">Album art as background</span>
-        <label class="toggle">
-          <input type="checkbox" id="album-art-enabled" checked>
-          <span class="toggle-track"></span>
-        </label>
-      </div>
-
-      <div id="spotify-images-row" class="toggle-row" style="display:none;">
-        <span class="toggle-label">bg/ folder images</span>
-        <label class="toggle">
-          <input type="checkbox" id="spotify-images-enabled">
-          <span class="toggle-track"></span>
-        </label>
-      </div>
-    </div>
-
-    <!-- Spotify VIS_GAIN — only shown in Spotify mode -->
-    <div id="spotify-gain-section" class="section" style="display:none;">
-      <div class="section-title">Visualizer gain</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Fixed gain — Spotify API does not expose playback volume.</div>
-      <div class="field">
-        <div class="field-label">VIS_GAIN <span class="field-value" id="val-vis-gain">1.0</span></div>
-        <input type="range" id="vis-gain" min="0.1" max="5" value="1.0" step="0.1">
       </div>
     </div>
 
@@ -1152,10 +1100,6 @@ const state = {
   imgOp:          24,
   imgBlur:        2,
   imagesEnabled:  true,
-  albumArtEnabled: false,  // ALBUM_ART_BG — off by default so defaults match the overlay reference (FR-008)
-  spotifyImagesEnabled: false,
-  visGain:        1.0,
-  mode:           'foobar',  // 'foobar' or 'spotify'
   trackOp:        69,
   artistOp:       58,
   timerOp:        45,
@@ -1306,10 +1250,6 @@ function syncAllInputs() {
   document.getElementById('val-spec-fmin').textContent    = state.specFreqMin + ' Hz';
   document.getElementById('spec-fmax').value              = state.specFreqMax;
   document.getElementById('val-spec-fmax').textContent    = state.specFreqMax + ' Hz';
-  document.getElementById('album-art-enabled').checked    = state.albumArtEnabled;
-  document.getElementById('spotify-images-enabled').checked = state.spotifyImagesEnabled;
-  document.getElementById('vis-gain').value               = state.visGain;
-  document.getElementById('val-vis-gain').textContent     = state.visGain.toFixed(1);
   document.getElementById('card-glass').checked           = state.cardGlass;
   document.getElementById('bg-motion').checked            = state.bgMotion;
   document.getElementById('vis-brightness').value         = state.visBrightness;
@@ -1505,7 +1445,6 @@ bindRange('spec-gain',        'specGain',       'val-spec-gain',     '', v => v.
 bindRange('spec-fmin',        'specFreqMin',    'val-spec-fmin',     ' Hz');
 bindRange('spec-fmax',        'specFreqMax',    'val-spec-fmax',     ' Hz');
 
-bindRange('vis-gain',         'visGain',        'val-vis-gain',      '', v => v.toFixed(1));
 bindRange('vis-brightness',   'visBrightness',  'val-vis-brightness','', v => v.toFixed(1));
 bindRange('render-fps',       'renderFps',      'val-render-fps',    '', v => v === 0 ? 'uncapped' : v);
 
@@ -1529,41 +1468,6 @@ document.getElementById('vis-enabled').addEventListener('change', e => {
   state.visEnabled = e.target.checked;
   updateOutput();
 });
-
-document.getElementById('album-art-enabled').addEventListener('change', e => {
-  state.albumArtEnabled = e.target.checked;
-  updateOutput();
-});
-
-document.getElementById('spotify-images-enabled').addEventListener('change', e => {
-  state.spotifyImagesEnabled = e.target.checked;
-  updateOutput();
-});
-
-// ── Mode switching ─────────────────────────────────────────────
-function setMode(mode) {
-  state.mode = mode;
-  document.getElementById('mode-foobar').classList.toggle('active', mode === 'foobar');
-  document.getElementById('mode-spotify').classList.toggle('active', mode === 'spotify');
-
-  // Toggle foobar-only elements
-  document.getElementById('images-enabled').closest('.toggle-row').style.display =
-    mode === 'foobar' ? '' : 'none';
-
-  // Toggle Spotify-only elements
-  document.getElementById('spotify-album-row').style.display =
-    mode === 'spotify' ? '' : 'none';
-  document.getElementById('spotify-images-row').style.display =
-    mode === 'spotify' ? '' : 'none';
-  document.getElementById('spotify-gain-section').style.display =
-    mode === 'spotify' ? '' : 'none';
-
-  // Update save button label
-  document.getElementById('btn-save').childNodes[1].textContent =
-    mode === 'spotify' ? ' Save Spotify file' : ' Save file';
-
-  updateOutput();
-}
 
 // Re-check marquee when width changes
 document.getElementById('card-width').addEventListener('input', () => {
@@ -1676,7 +1580,6 @@ function getJSOutput() {
   return `  const CONFIG = {
     ENDPOINT:       'http://localhost:8081/api/player?columns=%25artist%25,%25title%25,%25length_seconds%25',
     POLL_MS:        ${s.pollMs},
-    DEMO_MODE:      false,
     IMAGES:         ${s.imagesEnabled},
 
     CARD_BACKDROP_BLUR: ${s.cardGlass},
@@ -2268,7 +2171,6 @@ function generateHTML() {
 const CONFIG = {
   ENDPOINT:  'http://localhost:8081/api/player?columns=%25artist%25,%25title%25,%25length_seconds%25',
   POLL_MS:   ${s.pollMs},
-  DEMO_MODE: false,
   IMAGES:    ${s.imagesEnabled},
 
   // ── CARD GLASS (backdrop-filter) ─────────────────────────────
@@ -2761,9 +2663,8 @@ connectSpectrum();
 
 // ── Save button ────────────────────────────────────────────────
 document.getElementById('btn-save').addEventListener('click', () => {
-  const isSpotify = state.mode === 'spotify';
-  const html      = isSpotify ? generateSpotifyHTML() : generateHTML();
-  const filename  = isSpotify ? 'nowplaying-spotify.html' : 'nowplaying-overlay.html';
+  const html     = generateHTML();
+  const filename = 'nowplaying-overlay.html';
   const blob = new Blob([html], { type: 'text/html' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
@@ -2774,7 +2675,7 @@ document.getElementById('btn-save').addEventListener('click', () => {
 
 // ── Copy HTML button ───────────────────────────────────────────
 document.getElementById('btn-copy-html').addEventListener('click', () => {
-  const html = state.mode === 'spotify' ? generateSpotifyHTML() : generateHTML();
+  const html = generateHTML();
   navigator.clipboard.writeText(html).then(() => {
     const btn = document.getElementById('btn-copy-html');
     btn.classList.add('success');
@@ -2813,13 +2714,12 @@ function applyMockMarquee() {
 // ── Live track preview ─────────────────────────────────────────
 // Pull real now-playing data from the running overlay server (the same source
 // the overlay itself uses) so the preview card mirrors the actual track instead
-// of manual text. Endpoint follows the mode. Falls back to a sample track when
+// of manual text. Falls back to a sample track when
 // the server isn't reachable (e.g. configurator opened in a plain browser with
 // no servers running) so the preview is never blank. CORS is allowed by
 // overlay-server.ps1 (Access-Control-Allow-Origin: *).
 (function () {
   const FOOBAR_EP  = 'http://localhost:8081/api/player?columns=%25artist%25,%25title%25,%25length_seconds%25';
-  const SPOTIFY_EP = 'http://localhost:8081/api/spotify/current';
   const SAMPLE = { artist: 'Floating Points', title: 'LesAlpx', position: 87, duration: 272 };
 
   function fmt(sec) {
@@ -2839,29 +2739,16 @@ function applyMockMarquee() {
 
   async function poll() {
     try {
-      if (state.mode === 'spotify') {
-        const res  = await fetch(SPOTIFY_EP, { cache: 'no-store' });
-        const data = await res.json();
-        if (!data.is_playing && !data.item) { paint(SAMPLE); return; }
-        const item = data.item || {};
-        paint({
-          artist:   item.artists?.map(a => a.name).join(', ') || '—',
-          title:    item.name || '—',
-          position: (data.progress_ms || 0) / 1000,
-          duration: (item.duration_ms || 0) / 1000,
-        });
-      } else {
-        const res  = await fetch(FOOBAR_EP, { cache: 'no-store' });
-        const data = await res.json();
-        const item = data?.player?.activeItem;
-        if (!item || item.index < 0) { paint(SAMPLE); return; }
-        paint({
-          artist:   item.columns?.[0] || '—',
-          title:    item.columns?.[1] || '—',
-          position: parseFloat(item.position) || 0,
-          duration: parseFloat(item.duration) || 0,
-        });
-      }
+      const res  = await fetch(FOOBAR_EP, { cache: 'no-store' });
+      const data = await res.json();
+      const item = data?.player?.activeItem;
+      if (!item || item.index < 0) { paint(SAMPLE); return; }
+      paint({
+        artist:   item.columns?.[0] || '—',
+        title:    item.columns?.[1] || '—',
+        position: parseFloat(item.position) || 0,
+        duration: parseFloat(item.duration) || 0,
+      });
     } catch (_) {
       paint(SAMPLE);  // server not reachable — keep the preview populated
     }
@@ -2985,690 +2872,11 @@ document.getElementById('pull-file-input').addEventListener('change', e => {
   reader.readAsText(file);
 });
 
-// ── Generate Spotify HTML ──────────────────────────────────────
-function generateSpotifyHTML() {
-  const s = state;
-  const aSpreadStr = s.artistSpread > 0 ? `, 0 0 ${s.artistSpread}px rgba(0,0,0,${r(s.artistSpreadOp/100)})` : '';
-  const tSpreadStr = s.trackSpread  > 0 ? `, 0 0 ${s.trackSpread}px rgba(0,0,0,${r(s.trackSpreadOp/100)})`  : '';
-  const artistShadow = `0 1px ${s.artistShadow}px rgba(0,0,0,${r(s.artistShadowOp/100)})${aSpreadStr}`;
-  const trackShadow  = `0 1px ${s.trackShadow}px rgba(0,0,0,${r(s.trackShadowOp/100)})${tSpreadStr}`;
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Now Playing — Spotify</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --card-bg:         rgba(0, 0, 0, ${r(s.cardBgOp/100)});
-    --card-border:     rgba(255, 255, 255, ${r(s.cardBorderOp/100)});
-    --card-blur:       ${s.cardBlur}px;
-    --card-radius:     ${s.cardRadius}px;
-    --card-padding-x:  ${s.cardPx}px;
-    --card-padding-y:  ${s.cardPy}px;
-    --card-width:      ${s.cardWidth}px;
-    --card-height:     ${s.cardHeight > 0 ? s.cardHeight + 'px' : 'auto'};
-    --img-opacity:     ${r(s.imgOp/100)};
-    --img-blur:        ${s.imgBlur}px;
-    --img-scale:       1.06;
-    --color-artist:    rgba(255, 255, 255, ${r(s.artistOp/100)});
-    --color-track:     rgba(255, 255, 255, ${r(s.trackOp/100)});
-    --color-timer:     rgba(255, 255, 255, ${r(s.timerOp/100)});
-    --color-bar-bg:    rgba(255, 255, 255, ${r(s.barBgOp/100)});
-    --color-bar-fill:  rgba(255, 255, 255, ${r(s.barFillOp/100)});
-    --marquee-speed:   ${s.marqueeSpeed}s;
-    --font-artist: 'Syne', sans-serif;
-    --font-track:  'DM Sans', sans-serif;
-    --font-timer:  'DM Sans', sans-serif;
-  }
-
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: transparent; display: flex; align-items: flex-start; justify-content: flex-start; padding: 16px; -webkit-font-smoothing: antialiased; }
-
-  .card-wrap { position: relative; border-radius: var(--card-radius); }
-  #vis-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; border-radius: var(--card-radius); filter: var(--vis-filter, blur(12px) brightness(1.6)); }
-
-  .card {
-    position: relative; overflow: hidden;
-    border-radius: var(--card-radius); border: 0.5px solid var(--card-border);
-    background: var(--card-bg);
-    /* backdrop-filter applied at runtime from CONFIG.CARD_BACKDROP_BLUR (see script) */
-    padding: var(--card-padding-y) var(--card-padding-x);
-    width: var(--card-width); height: var(--card-height);
-    flex-shrink: 0; display: flex; flex-direction: column; gap: 7px;
-    opacity: 0; transform: translateY(5px);
-    transition: opacity 0.4s ease, transform 0.4s ease;
-  }
-  .card.visible { opacity: 1; transform: translateY(0); }
-  .bg-layer { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
-  /* transform/filter driven at runtime from bgBaseScale/bgBaseBlur (see script), not hard-coded here (FR-006) */
-  .bg-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.9s ease; will-change: transform, filter; }
-  .bg-img.active { opacity: var(--img-opacity); }
-  .content { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 7px; }
-  .marquee-clip { overflow: hidden; width: 100%; }
-  .marquee-clip.scrolling {
-    -webkit-mask-image: linear-gradient(to right, transparent 0%, black ${s.fadeLeft}%, black ${100-s.fadeRight}%, transparent 100%);
-    mask-image: linear-gradient(to right, transparent 0%, black ${s.fadeLeft}%, black ${100-s.fadeRight}%, transparent 100%);
-  }
-  @keyframes marquee-bounce {
-    0%,10% { transform: translateX(0); }
-    45%,55% { transform: translateX(var(--marquee-offset)); }
-    90%,100% { transform: translateX(0); }
-  }
-  .marquee-clip.scrolling .inner { animation: marquee-bounce var(--marquee-speed) ease-in-out infinite; }
-  .artist { font-family: var(--font-artist); font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-artist); white-space: nowrap; text-shadow: ${artistShadow}; transition: opacity 0.15s ease; font-variant-numeric: lining-nums; }
-  .middle-row { display: flex; align-items: center; gap: 10px; }
-  .progress-bar { flex: 1; height: 2px; background: var(--color-bar-bg); border-radius: 2px; overflow: hidden; margin-left: auto; }
-  .progress-fill { height: 100%; width: 0%; background: var(--color-bar-fill); border-radius: 2px; transition: width 1s linear; }
-  .timer { font-family: var(--font-timer); font-size: 11px; font-weight: 300; letter-spacing: 0.05em; color: var(--color-timer); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; text-shadow: ${artistShadow}; }
-  .track { font-family: var(--font-track); font-size: 16px; font-weight: 500; color: var(--color-track); white-space: nowrap; text-shadow: ${trackShadow}; transition: opacity 0.15s ease; }
-  .fade-out { opacity: 0 !important; }
-</style>
-</head>
-<body>
-<div class="card-wrap" id="card-wrap">
-  <canvas id="vis-canvas"></canvas>
-  <div class="card" id="card">
-    <div class="bg-layer">
-      <img class="bg-img" id="bg-a" src="" alt="" decoding="async">
-      <img class="bg-img" id="bg-b" src="" alt="" decoding="async">
-    </div>
-    <div class="content">
-      <div class="marquee-clip" id="artist-clip"><div class="inner artist" id="artist">Artist</div></div>
-      <div class="middle-row">
-        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-        <div class="timer" id="timer">0:00 / 0:00</div>
-      </div>
-      <div class="marquee-clip" id="track-clip"><div class="inner track" id="track">Track Title</div></div>
-    </div>
-  </div>
-</div>
-<script>
-const CONFIG = {
-  // ── METADATA ADAPTER (Spotify) ── start
-  //   Supplies now-playing data + album art. Reference uses Beefweb here.
-  ENDPOINT:     'http://localhost:8081/api/spotify/current',  // 8081 = server serve port (8082 is OAuth callback only)
-  ALBUM_ART_BG: ${s.albumArtEnabled},  // Spotify album art as card background; mutually exclusive with IMAGES; default off so defaults match the reference
-  VIS_GAIN:     ${s.visGain.toFixed(1)},    // static visualizer gain — Spotify exposes no playback volume, so this replaces the reference's dynamic gain
-  // ── METADATA ADAPTER (Spotify) ── end
-  POLL_MS:   ${s.pollMs},
-  DEMO_MODE: false,
-  IMAGES:    ${s.spotifyImagesEnabled},
-
-  // ── CARD GLASS (backdrop-filter) ─────────────────────────────
-  // Frosted-glass blur behind the card. OFF by default for gaming
-  // streams: it re-blurs the full card backdrop every frame the scene
-  // behind the overlay changes — the overlay's heaviest GPU cost
-  // (audit finding F-017). Turn ON for music-specific streams or larger
-  // overlay cards where the glass actually reads. Radius = --card-blur (22px).
-  CARD_BACKDROP_BLUR: ${s.cardGlass},
-
-  // ── VISUALIZER ────────────────────────────────────────────────
-  //  Connects to spectrum-server.py (ws://localhost:9001) and
-  //  drives the border visualizer with real FFT frequency data.
-  //
-  //  SETUP:
-  //  Run spectrum-server.py before launching OBS.
-  //
-  VISUALIZER:        ${s.visEnabled},
-  SPECTRUM_PORT:     ${s.specPort},
-  VIS_COLOR:         '255, 255, 255',
-  VIS_MAX_OPACITY:   ${r(s.visOpacity/100)},
-  VIS_BAR_DEPTH:     ${s.visDepth},
-  VIS_BLUR:          ${s.visBlur},
-  VIS_BRIGHTNESS:    ${s.visBrightness},     // post-blur brightness multiplier — restores glow intensity lost to CSS blur spread
-  VIS_SMOOTHING:     ${r(s.visSmoothing/100)},
-  VIS_BANDS:         ${s.visBands},
-
-  // ── BACKGROUND FFT MOTION (independent from visualizer) ──────
-  // Separate smoothing/band logic from the visualizer.
-  // This only affects the background image and does not touch the
-  // existing glow/visualizer system in any way.
-  BG_MOTION: ${s.bgMotion},
-  BG_MOTION_BANDS: ${s.bgMotionBands},          // group server FFT into broad bands
-  BG_BASE_BLUR: ${s.bgBaseBlur},          // extra blur always present on top of --img-blur
-  BG_BLUR_MAX_ADD: ${s.bgBlurMaxAdd},       // FFT blur modulation stays very small
-  BG_ZOOM_MAX_ADD: ${s.bgZoomMaxAdd},      // ~1.8% max extra zoom from FFT
-  BG_BASELINE_ZOOM: ${s.bgBaselineZoom},    // slow continuous "breathing"
-  BG_ZOOM_SMOOTH: ${s.bgZoomSmooth},       // slow inertia for cinematic zoom
-  BG_BLUR_SMOOTH: ${s.bgBlurSmooth},       // slightly faster inertia for blur
-  BG_DELAY_SMOOTH: ${s.bgDelaySmooth},      // intentional lag vs foreground glow
-  BG_MICRO_SMOOTH: ${s.bgMicroSmooth},      // heavily smoothed high-band micro motion
-
-  // ── RENDER RATE CAP ──────────────────────────────────────────
-  // Caps how often the canvas is redrawn and bg motion is updated.
-  // Server sends FFT data at 30 FPS, so anything above 30 just
-  // re-renders the same data. Lower = less CPU. Set to 0 for uncapped.
-  RENDER_FPS: ${s.renderFps},
-};
-
-// ── Elements ───────────────────────────────────────────────────
-const cardWrap  = document.getElementById('card-wrap');
-const card      = document.getElementById('card');
-const elArtist  = document.getElementById('artist');
-const elTrack   = document.getElementById('track');
-const elTimer   = document.getElementById('timer');
-const elFill    = document.getElementById('progress-fill');
-const bgA       = document.getElementById('bg-a');
-const bgB       = document.getElementById('bg-b');
-const artistClip= document.getElementById('artist-clip');
-const trackClip = document.getElementById('track-clip');
-
-let imgQueue = [], allImages = [], activeLayer = 'a', lastTitle = '';
-let visGain  = 1.0;
-
-// ── METADATA ADAPTER (Spotify) ── start
-//   Spotify-specific state + static visualizer gain. Reference uses a
-//   volume-derived dynamic visGain here; Spotify has no volume, so VIS_GAIN
-//   is a user-set static multiplier. Track identity is keyed off the Spotify
-//   track id; playback position is interpolated between polls.
-let lastTrackId    = '';
-let lastProgressMs = 0;
-let lastProgressAt = 0;
-let isPlaying      = false;
-visGain = CONFIG.VIS_GAIN;   // static gain; engine's connectSpectrum reads visGain unchanged
-// ── METADATA ADAPTER (Spotify) ── end
-
-// (#1) Apply VIS_BLUR + VIS_BRIGHTNESS as a chained CSS filter (GPU-composited)
-document.getElementById('vis-canvas').style.setProperty(
-  '--vis-filter',
-  \`blur(\${CONFIG.VIS_BLUR}px) brightness(\${CONFIG.VIS_BRIGHTNESS})\`
-);
-
-// Card glass blur — operator toggle. When on, reproduces the baseline
-// backdrop-filter exactly (radius read from --card-blur); when off, no
-// backdrop pass at all. Missing/invalid flag falls back to off.
-if (CONFIG.CARD_BACKDROP_BLUR) {
-  const cardBlur = getComputedStyle(document.documentElement)
-    .getPropertyValue('--card-blur').trim() || '22px';
-  card.style.setProperty('backdrop-filter', \`blur(\${cardBlur})\`);
-  card.style.setProperty('-webkit-backdrop-filter', \`blur(\${cardBlur})\`);
-}
-
-// (#4) Cache card radius — never changes at runtime
-const cachedCardRadius = parseFloat(getComputedStyle(document.documentElement)
-  .getPropertyValue('--card-radius')) || 20;
-
-// (#5) Parse VIS_COLOR once
-const [VIS_CR, VIS_CG, VIS_CB] = CONFIG.VIS_COLOR.split(',').map(s => s.trim());
-
-// (#7) Read base CSS values for bg-img once for direct style writes
-const bgBaseScale = parseFloat(getComputedStyle(document.documentElement)
-  .getPropertyValue('--img-scale')) || 1.06;
-const bgBaseBlur  = parseFloat(getComputedStyle(document.documentElement)
-  .getPropertyValue('--img-blur'))  || 1;
-
-// (#8) Visibility tracking for rAF pause
-let cardVisible = false;
-let rafId       = null;
-
-// ── Images ─────────────────────────────────────────────────────
-function shuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-function nextImage() {
-  if (!CONFIG.IMAGES || !allImages.length) return;
-  if (!imgQueue.length) imgQueue = shuffle(allImages);
-  const src      = imgQueue.pop();
-  const incoming = activeLayer === 'a' ? bgB : bgA;
-  const outgoing = activeLayer === 'a' ? bgA : bgB;
-  incoming.src = src;
-  incoming.onload = () => {
-    incoming.classList.add('active');
-    outgoing.classList.remove('active');
-    activeLayer = activeLayer === 'a' ? 'b' : 'a';
-  };
-}
-
-async function loadImageList() {
-  if (!CONFIG.IMAGES) return;
-  try {
-    const res   = await fetch('http://localhost:8081/bg-list', { cache: 'no-store' });
-    const files = await res.json();
-    if (!files.length) return;
-    allImages = files;
-    imgQueue  = shuffle(allImages);
-    const first = imgQueue.pop();
-    bgA.src = first;
-    bgA.onload = () => bgA.classList.add('active');
-  } catch (_) {}
-}
-
-loadImageList();
-
-// ── Marquee ─────────────────────────────────────────────────────
-function applyMarquee(clip, inner) {
-  clip.classList.remove('scrolling');
-  inner.style.removeProperty('--marquee-offset');
-  clip.style.webkitMaskImage = '';
-  clip.style.maskImage = '';
-  requestAnimationFrame(() => {
-    const overflow = inner.scrollWidth - clip.clientWidth;
-    if (overflow > 2) {
-      inner.style.setProperty('--marquee-offset', \`-\${overflow}px\`);
-      clip.classList.add('scrolling');
-    }
-  });
-}
-
-// ── Helpers ─────────────────────────────────────────────────────
-function fmtTime(s) {
-  s = Math.max(0, Math.floor(s));
-  return Math.floor(s / 60) + ':' + (s % 60).toString().padStart(2, '0');
-}
-
-// ── METADATA ADAPTER (Spotify) ── start
-//   Album-art-as-background crossfade + the Spotify UI update. These feed the
-//   SAME engine entry points the reference's data path feeds (the bg-a/bg-b
-//   crossfade layers, the card text setters, the marquee, the rAF loop) — they
-//   do not fork the rendering engine. Reference supplies these from Beefweb.
-
-// Album art → engine background slot. Rides the same bg-a/bg-b crossfade
-// layers (and decoding="async") IMAGES uses, so it shares the async-decode
-// path. Mutually exclusive with the local-bg IMAGES source.
-function setAlbumArt(url) {
-  if (!CONFIG.ALBUM_ART_BG || !url) return;
-  const incoming = activeLayer === 'a' ? bgB : bgA;
-  const outgoing = activeLayer === 'a' ? bgA : bgB;
-  incoming.src = url;
-  incoming.onload = () => {
-    incoming.classList.add('active');
-    outgoing.classList.remove('active');
-    activeLayer = activeLayer === 'a' ? 'b' : 'a';
-  };
-}
-
-// ── UI update ───────────────────────────────────────────────────
-// Spotify shape: trackId-keyed new-track detection, ms timings, album art.
-function updateUI({ trackId, artist, title, artUrl, progressMs, durationMs, playing }) {
-  const isNewTrack = trackId !== lastTrackId;
-  if (isNewTrack) {
-    elArtist.classList.add('fade-out');
-    elTrack.classList.add('fade-out');
-    setTimeout(() => {
-      elArtist.textContent = artist || '—';
-      elTrack.textContent  = title  || '—';
-      elArtist.classList.remove('fade-out');
-      elTrack.classList.remove('fade-out');
-      applyMarquee(artistClip, elArtist);
-      applyMarquee(trackClip,  elTrack);
-    }, 160);
-    setAlbumArt(artUrl);
-    nextImage();
-    lastTrackId = trackId;
-  }
-
-  // Progress interpolation between polls (Spotify polls ~1/s)
-  lastProgressMs = progressMs;
-  lastProgressAt = Date.now();
-  isPlaying      = playing;
-
-  // fmtTime() (shared engine) takes SECONDS — convert from Spotify ms
-  elTimer.textContent = fmtTime(progressMs / 1000) + ' / ' + fmtTime(durationMs / 1000);
-  elFill.style.width  = durationMs > 0 ? Math.min(100, (progressMs / durationMs) * 100) + '%' : '0%';
-
-  // (#8) Track visibility and start/stop rAF loop
-  if (!cardVisible) {
-    cardVisible = true;
-    card.classList.add('visible');
-    startAnimationLoop();
-  }
-}
-// ── METADATA ADAPTER (Spotify) ── end
-
-// (#8) Hide card and stop rAF when nothing is playing
-function hideCard() {
-  if (cardVisible) {
-    cardVisible = false;
-    card.classList.remove('visible');
-    if (rafId !== null) {
-      cancelAnimationFrame(rafId);
-      rafId = null;
-    }
-  }
-}
-
-// ── Background FFT motion (independent system) ─────────────────
-// Separate FFT consumer for background image only.
-// - Groups incoming FFT into broad bands
-// - Shapes signal with a curve to soften low-level chatter
-// - Uses delayed targets + inertia so motion trails behind glow
-
-const BG_BAND_GROUPS = CONFIG.BG_MOTION_BANDS;
-const bgGroupedBands = new Array(BG_BAND_GROUPS).fill(0);
-let bgDelayedLow  = 0, bgDelayedMid  = 0, bgDelayedHigh = 0;
-let bgZoomValue   = 1, bgBlurValue   = CONFIG.BG_BASE_BLUR, bgMicroValue = 0;
-const bgEnabled   = CONFIG.IMAGES && CONFIG.BG_MOTION;
-
-// Soft shaping to reduce chatter/spikes and keep motion subtle
-function bgShape(v) {
-  const clamped = Math.max(0, Math.min(1, v));
-  return Math.pow(clamped, 1.55);
-}
-
-// Group server bands into broad bands
-function bgRegroup(src) {
-  if (!bgEnabled || !Array.isArray(src) || !src.length) return;
-  for (let i = 0; i < BG_BAND_GROUPS; i++) {
-    const start = Math.floor(i * src.length / BG_BAND_GROUPS);
-    const end   = Math.max(start + 1, Math.floor((i + 1) * src.length / BG_BAND_GROUPS));
-    let sum = 0;
-    for (let j = start; j < end; j++) sum += src[j] || 0;
-    bgGroupedBands[i] = sum / (end - start);
-  }
-}
-
-function bgAnimate(t) {
-  if (!bgEnabled) return;
-
-  // Broad frequency mapping:
-  // - bass drives slow zoom
-  // - mids drive blur
-  // - highs add tiny, heavily-smoothed micro-variation
-  const lowRaw  = (bgGroupedBands[0] * 0.72) + (bgGroupedBands[1] * 0.28);
-  const midRaw  = (bgGroupedBands[2] * 0.55) + (bgGroupedBands[3] * 0.45);
-  const highRaw = (bgGroupedBands[4] * 0.45) + (bgGroupedBands[5] * 0.55);
-
-  // Shape + soft clamp so peaks do not snap the image
-  const lowTarget  = Math.min(0.95, bgShape(lowRaw));
-  const midTarget  = Math.min(0.85, bgShape(midRaw) * 0.9);
-  const highTarget = Math.min(0.70, bgShape(highRaw) * 0.7);
-
-  // Intentional response delay: background trails the foreground glow
-  bgDelayedLow  += (lowTarget  - bgDelayedLow)  * CONFIG.BG_DELAY_SMOOTH;
-  bgDelayedMid  += (midTarget  - bgDelayedMid)  * (CONFIG.BG_DELAY_SMOOTH * 1.15);
-  bgDelayedHigh += (highTarget - bgDelayedHigh) * (CONFIG.BG_DELAY_SMOOTH * 0.9);
-
-  // Slow baseline breathing independent of FFT
-  const baselineZoom = 1 + CONFIG.BG_BASELINE_ZOOM * (0.5 + 0.5 * Math.sin(t * 0.16));
-
-  // Tiny high-band variation, smoothed enough to avoid visual noise
-  bgMicroValue += (bgDelayedHigh - bgMicroValue) * CONFIG.BG_MICRO_SMOOTH;
-
-  // Map FFT → zoom/blur
-  const zoomTarget = baselineZoom + (bgDelayedLow * CONFIG.BG_ZOOM_MAX_ADD) + (bgMicroValue * 0.0015);
-  const blurTarget = CONFIG.BG_BASE_BLUR + (bgDelayedMid * CONFIG.BG_BLUR_MAX_ADD) + (bgMicroValue * 0.06);
-
-  // Inertia smoothing — zoom is slower than blur so it feels deeper/heavier
-  bgZoomValue += (zoomTarget - bgZoomValue) * CONFIG.BG_ZOOM_SMOOTH;
-  bgBlurValue += (blurTarget - bgBlurValue) * CONFIG.BG_BLUR_SMOOTH;
-
-  // (#7) Write directly to active bg-img elements, bypassing CSS variable resolution
-  const finalScale = bgBaseScale * bgZoomValue;
-  const finalBlur  = bgBaseBlur + bgBlurValue;
-  const transformStr = \`scale(\${finalScale})\`;
-  const filterStr    = \`blur(\${finalBlur}px)\`;
-
-  if (bgA.classList.contains('active')) {
-    bgA.style.transform = transformStr;
-    bgA.style.filter    = filterStr;
-  }
-  if (bgB.classList.contains('active')) {
-    bgB.style.transform = transformStr;
-    bgB.style.filter    = filterStr;
-  }
-}
-
-// ── Visualizer ─────────────────────────────────────────────────
-const visCanvas  = document.getElementById('vis-canvas');
-const visCtx     = visCanvas.getContext('2d');
-const VIS_BANDS  = CONFIG.VIS_BANDS;
-const visBands   = new Float64Array(VIS_BANDS);  // smoothed
-const visRaw     = new Float64Array(VIS_BANDS);  // raw from WebSocket
-
-// (#9) Precomputed band positions — recalculated on resize only
-let bandPositions = null;  // [{x, y, nx, ny}, ...]
-let cachedBarW    = 3;
-
-function computeBandPositions() {
-  const W = visCanvas.width;
-  const H = visCanvas.height;
-  const R = cachedCardRadius;
-  const straightW = W - 2 * R;
-  const straightH = H - 2 * R;
-  const perimeter = 2 * straightW + 2 * straightH + Math.PI * 2 * R;
-  const bandStep  = perimeter / VIS_BANDS;
-
-  cachedBarW = Math.max(3, bandStep * 1.2);
-  bandPositions = new Array(VIS_BANDS);
-
-  for (let i = 0; i < VIS_BANDS; i++) {
-    const dist = i * bandStep + bandStep * 0.5;
-    let x, y, nx, ny;
-
-    if (dist < straightW) {
-      x = R + dist; y = 0; nx = 0; ny = 1;
-    } else if (dist < straightW + Math.PI * 0.5 * R) {
-      const a = (dist - straightW) / R;
-      x = W - R + Math.sin(a) * R; y = R - Math.cos(a) * R;
-      nx = -Math.sin(a); ny = -Math.cos(a);
-    } else if (dist < straightW + Math.PI * 0.5 * R + straightH) {
-      const d = dist - straightW - Math.PI * 0.5 * R;
-      x = W; y = R + d; nx = -1; ny = 0;
-    } else if (dist < straightW + Math.PI * R + straightH) {
-      const a = (dist - straightW - Math.PI * 0.5 * R - straightH) / R;
-      x = W - R + Math.cos(a) * R; y = H - R + Math.sin(a) * R;
-      nx = -Math.cos(a); ny = -Math.sin(a);
-    } else if (dist < 2 * straightW + Math.PI * R + straightH) {
-      const d = dist - straightW - Math.PI * R - straightH;
-      x = W - R - d; y = H; nx = 0; ny = -1;
-    } else if (dist < 2 * straightW + Math.PI * 1.5 * R + straightH) {
-      const a = (dist - 2 * straightW - Math.PI * R - straightH) / R;
-      x = R - Math.sin(a) * R; y = H - R + Math.cos(a) * R;
-      nx = Math.sin(a); ny = -Math.cos(a);
-    } else if (dist < 2 * straightW + Math.PI * 1.5 * R + 2 * straightH) {
-      const d = dist - 2 * straightW - Math.PI * 1.5 * R - straightH;
-      x = 0; y = H - R - d; nx = 1; ny = 0;
-    } else {
-      const a = (dist - 2 * straightW - Math.PI * 1.5 * R - 2 * straightH) / R;
-      x = R - Math.cos(a) * R; y = R - Math.sin(a) * R;
-      nx = Math.cos(a); ny = Math.sin(a);
-    }
-
-    bandPositions[i] = { x, y, nx, ny };
-  }
-}
-
-// Size canvas to match card
-function visResize() {
-  visCanvas.width  = cardWrap.offsetWidth;
-  visCanvas.height = cardWrap.offsetHeight;
-  computeBandPositions();
-}
-visResize();
-window.addEventListener('resize', visResize);
-
-function visDraw() {
-  const W     = visCanvas.width;
-  const H     = visCanvas.height;
-  const depth = CONFIG.VIS_BAR_DEPTH;
-
-  visCtx.clearRect(0, 0, W, H);
-  // (#1) No ctx.filter — blur is handled by CSS on the canvas element
-
-  // Smooth bands — snappy attack, gentle decay
-  for (let i = 0; i < VIS_BANDS; i++) {
-    const target = visRaw[i];
-    const rate   = target > visBands[i]
-      ? CONFIG.VIS_SMOOTHING * 4
-      : CONFIG.VIS_SMOOTHING;
-    visBands[i] += (target - visBands[i]) * rate;
-  }
-
-  // (#6) Reuse line settings across all bands
-  visCtx.lineCap = 'round';
-  visCtx.lineWidth = cachedBarW;
-
-  for (let i = 0; i < VIS_BANDS; i++) {
-    if (visBands[i] < 0.005) continue;
-
-    const pos   = bandPositions[i];
-    const barH  = visBands[i] * depth;
-    const alpha = visBands[i] * CONFIG.VIS_MAX_OPACITY;
-    const endX  = pos.x + pos.nx * barH;
-    const endY  = pos.y + pos.ny * barH;
-
-    // (#6) Gradient with pre-parsed color channels — (#10) no .toFixed()
-    const grad = visCtx.createLinearGradient(pos.x, pos.y, endX, endY);
-    grad.addColorStop(0,   \`rgba(\${VIS_CR},\${VIS_CG},\${VIS_CB},\${alpha})\`);
-    grad.addColorStop(0.4, \`rgba(\${VIS_CR},\${VIS_CG},\${VIS_CB},\${alpha * 0.6})\`);
-    grad.addColorStop(1,   \`rgba(\${VIS_CR},\${VIS_CG},\${VIS_CB},0)\`);
-
-    visCtx.beginPath();
-    visCtx.strokeStyle = grad;
-    visCtx.moveTo(pos.x, pos.y);
-    visCtx.lineTo(endX, endY);
-    visCtx.stroke();
-  }
-}
-
-// ── (#2) Single rAF loop ────────────────────────────────────────
-// Frame interval for the render rate cap. 0 = uncapped (run at browser rAF rate).
-const FRAME_INTERVAL_MS = CONFIG.RENDER_FPS > 0 ? 1000 / CONFIG.RENDER_FPS : 0;
-let   lastFrameTime     = 0;
-
-function animationLoop() {
-  rafId = requestAnimationFrame(animationLoop);
-
-  const now = performance.now();
-  // Gate: skip work if not enough time has elapsed since last render.
-  // The 0.5ms epsilon prevents missing frames due to rAF/vsync alignment.
-  if (FRAME_INTERVAL_MS > 0 && (now - lastFrameTime) < (FRAME_INTERVAL_MS - 0.5)) return;
-  lastFrameTime = now;
-
-  const t = now * 0.001;
-
-  // Background motion (uses its own config/state/smoothing)
-  bgAnimate(t);
-
-  // Visualizer canvas draw
-  if (CONFIG.VISUALIZER) visDraw();
-}
-
-// (#8) Start/stop helpers
-function startAnimationLoop() {
-  if (rafId === null) {
-    lastFrameTime = 0;  // ensure first frame after restart renders immediately
-    rafId = requestAnimationFrame(animationLoop);
-  }
-}
-
-// ── (#3) Shared WebSocket connection ────────────────────────────
-function connectSpectrum() {
-  if (!CONFIG.VISUALIZER && !bgEnabled) return;
-
-  const ws = new WebSocket(\`ws://localhost:\${CONFIG.SPECTRUM_PORT}\`);
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      if (!Array.isArray(data)) return;
-
-      // Feed visualizer (own gain)
-      if (CONFIG.VISUALIZER) {
-        for (let i = 0; i < VIS_BANDS; i++) {
-          const idx = Math.floor(i * data.length / VIS_BANDS);
-          visRaw[i] = Math.min(1, (data[idx] || 0) * visGain);
-        }
-      }
-
-      // Feed background motion (broad bands, own regroup/shaping)
-      bgRegroup(data);
-    } catch (_) {}
-  };
-
-  ws.onclose = () => setTimeout(connectSpectrum, 3000);
-  ws.onerror = () => {};
-}
-
-// ── METADATA ADAPTER (Spotify) ── start
-//   Poll api/spotify/current, parse the Spotify currently-playing shape, and
-//   interpolate progress between polls. Reference polls Beefweb here. Degraded
-//   states ({"is_playing":false} / errors) hide the card via the shared hideCard().
-
-// ── Fetch ───────────────────────────────────────────────────────
-async function fetchNowPlaying() {
-  try {
-    const res  = await fetch(CONFIG.ENDPOINT, { cache: 'no-store' });
-    const data = await res.json();
-    if (!data.is_playing && !data.item) { hideCard(); isPlaying = false; return; }
-    const item = data.item;
-    updateUI({
-      trackId:    item.id,
-      artist:     item.artists?.map(a => a.name).join(', ') || '—',
-      title:      item.name || '—',
-      artUrl:     item.album?.images?.[0]?.url || '',
-      progressMs: data.progress_ms || 0,
-      durationMs: item.duration_ms || 0,
-      playing:    data.is_playing,
-    });
-  } catch (_) { hideCard(); isPlaying = false; }
-}
-
-// Smooth timer tick — interpolate the position locally between polls
-function tickTimer() {
-  if (!isPlaying || lastProgressAt === 0) return;
-  const current = lastProgressMs + (Date.now() - lastProgressAt);
-  elTimer.textContent = fmtTime(current / 1000) + ' / ' + elTimer.textContent.split(' / ')[1];
-}
-setInterval(tickTimer, 250);
-
-// ── Demo mode ──────────────────────────────────────────────────
-const DEMO_TRACKS = [
-  { id: '1', artist: 'Floating Points', title: 'LesAlpx',        duration: 272000 },
-  { id: '2', artist: 'Burial',          title: 'Archangel',      duration: 196000 },
-  { id: '3', artist: 'Four Tet',        title: 'Angel Echoes',   duration: 263000 },
-  { id: '4', artist: 'Jon Hopkins',     title: 'Open Eye Signal', duration: 475000 },
-];
-let demoIdx = 0, demoPos = 0;
-
-function runDemo() {
-  const t = DEMO_TRACKS[demoIdx];
-  updateUI({ trackId: t.id, artist: t.artist, title: t.title, artUrl: '',
-             progressMs: demoPos, durationMs: t.duration, playing: true });
-  demoPos += 1000;
-  if (demoPos >= t.duration) { demoPos = 0; demoIdx = (demoIdx + 1) % DEMO_TRACKS.length; }
-}
-
-if (CONFIG.DEMO_MODE) {
-  runDemo();
-  setInterval(runDemo, CONFIG.POLL_MS);
-} else {
-  fetchNowPlaying();
-  setInterval(fetchNowPlaying, CONFIG.POLL_MS);
-}
-// ── METADATA ADAPTER (Spotify) ── end
-
-// ── Initialize bg-img baseline (#7) ─────────────────────────────
-// Set initial transform/filter directly so images don't start unstyled
-const initTransform = \`scale(\${bgBaseScale})\`;
-const initFilter    = \`blur(\${bgBaseBlur + CONFIG.BG_BASE_BLUR}px)\`;
-bgA.style.transform = initTransform;
-bgA.style.filter    = initFilter;
-bgB.style.transform = initTransform;
-bgB.style.filter    = initFilter;
-
-// ── Start spectrum connection ───────────────────────────────────
-connectSpectrum();
-<\/script>
-</body>
-</html>`;
-}
-
 // ── Sync LEDs (Meter Bridge signature) ─────────────────────────
 // Non-slider controls (toggles/selects) the bindRange map doesn't cover.
 Object.assign(CTRL_KEYS, {
   'images-enabled': 'imagesEnabled', 'vis-enabled': 'visEnabled',
   'card-glass': 'cardGlass', 'bg-motion': 'bgMotion',
-  'album-art-enabled': 'albumArtEnabled', 'spotify-images-enabled': 'spotifyImagesEnabled',
   'poll-ms': 'pollMs', 'spec-device': 'specDevice',
 });
 
