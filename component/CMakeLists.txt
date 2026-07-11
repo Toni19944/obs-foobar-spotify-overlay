@@ -67,7 +67,8 @@ add_custom_command(
 
 # ---------------------------------------------------------------- DLL
 set(COMPONENT_SOURCES
-    src/foo_obs_overlay.cpp)
+    src/foo_obs_overlay.cpp
+    src/settings.cpp)
 
 add_library(foo_obs_overlay SHARED
     ${COMPONENT_SOURCES}
