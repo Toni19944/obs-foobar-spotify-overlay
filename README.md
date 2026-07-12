@@ -31,7 +31,9 @@ no Python, no Beefweb. Install the component, point OBS at it, done.
 2. Double-click the `.fb2k-component` file (or use foobar2000 → Preferences →
    Components → Install) and let foobar2000 restart.
 3. In OBS, add a **Browser Source** pointing at `http://localhost:8081/` with a
-   transparent background (RGBA `0,0,0,0`).
+   transparent background (RGBA `0,0,0,0`). To hide the card while playback is
+   paused, add `?hideWhenPaused=1` to the URL:
+   `http://localhost:8081/?hideWhenPaused=1`.
 
 That's it — play a track and the card, backgrounds, and spectrum glow are live.
 
