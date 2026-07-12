@@ -98,23 +98,45 @@ void pull_thread_main() {
             continue;
         }
 
+        double playhead = 0.0;
+        if (!g_stream.is_valid() || !g_stream->get_absolute_time(playhead)) {
+            anchored = false;
+            feed_silence_window();
+            continue;
+        }
+        // Read position = playback time − offset (positive offset =
+        // spectrum later). All reads are paced against this target.
+        const double target = playhead - offset_s;
+
         if (!anchored) {
-            double t = 0.0;
-            if (g_stream.is_valid() && g_stream->get_absolute_time(t)) {
-                // Read position = playback time − offset (positive offset =
-                // spectrum later). Contiguous reads resume from here (E3).
-                cursor = t - offset_s;
-                if (cursor < 0.0) cursor = 0.0;
-                anchored = true;
-                reset_input_chain();
-                last_data_time = steady_now();
-            } else {
-                feed_silence_window();
-                continue;
-            }
+            cursor = target;
+            if (cursor < 0.0) cursor = 0.0;
+            anchored = true;
+            reset_input_chain();
+            last_data_time = steady_now();
         }
 
-        if (g_stream.is_valid() && g_stream->get_chunk_absolute(chunk, cursor, kWindowPeriod)
+        // Backward discontinuity (seek back): cursor ahead of the paced
+        // target only happens on a real jump — re-anchor, don't wait it out.
+        if (cursor > target + kReanchorSlack) {
+            console::printf(
+                "foo_obs_overlay: spectrum read discontinuity "
+                "(cursor %.3f, playback %.3f) — re-anchoring", cursor, target);
+            anchored = false;
+            continue;
+        }
+
+        // PACING (SC-008): only read a window once it is fully behind the
+        // playhead target; otherwise sleep the gap. Without this the loop
+        // races into the decode-ahead buffer and burns CPU re-anchoring.
+        if (cursor + kWindowPeriod > target) {
+            double wait = cursor + kWindowPeriod - target;
+            if (wait > kWindowPeriod) wait = kWindowPeriod;
+            std::this_thread::sleep_for(std::chrono::duration<double>(wait));
+            continue;
+        }
+
+        if (g_stream->get_chunk_absolute(chunk, cursor, kWindowPeriod)
             && chunk.get_sample_count() > 0) {
             cursor += chunk.get_duration();
             last_data_time = steady_now();
@@ -171,19 +193,14 @@ void pull_thread_main() {
             continue; // keep consuming while data is available
         }
 
-        // No data at the cursor. Distinguish "not yet available" (live edge)
-        // from "fell out of the backlog" (seek/stall) via current time.
-        double t = 0.0;
-        if (g_stream.is_valid() && g_stream->get_absolute_time(t)) {
-            const double target = t - offset_s;
-            if (cursor > target + kReanchorSlack ||
-                cursor < target - kBacklogSeconds + kReanchorSlack) {
-                console::printf(
-                    "foo_obs_overlay: spectrum read discontinuity "
-                    "(cursor %.3f, playback %.3f) — re-anchoring", cursor, target);
-                anchored = false;
-                continue;
-            }
+        // Paced cursor with no data: the region was flushed or evicted
+        // (seek/track change) — re-anchor; otherwise transient, retry.
+        if (cursor < playhead - kBacklogSeconds + kReanchorSlack) {
+            console::printf(
+                "foo_obs_overlay: spectrum read discontinuity "
+                "(cursor %.3f, playback %.3f) — re-anchoring", cursor, target);
+            anchored = false;
+            continue;
         }
 
         if (steady_now() - last_data_time > kStarvationGrace) {
