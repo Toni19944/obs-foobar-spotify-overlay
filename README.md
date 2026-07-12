@@ -5,90 +5,103 @@ A clean, minimal OBS browser-source overlay that shows your currently playing
 visualizer glowing around the border. Optionally crossfades through a folder of
 background images on every track change. Comes with a visual configurator.
 
+Everything is served by a **native foobar2000 component** — no external servers,
+no Python, no Beefweb. Install the component, point OBS at it, done.
+
 [![Watch the demo](preview.png)](https://youtu.be/GIjEJSzIUnQ)
 
 ---
 
 ## What's included
 
-- **Overlay** (`nowplaying-overlay.html`) — now-playing card driven by the
-  [Beefweb](https://github.com/hyperblast/beefweb) HTTP API.
-- **Border spectrum visualizer** — real FFT data captured from your audio device and
-  streamed to the overlay as a soft, frequency-reactive glow.
+- **`foo_obs_overlay` component** (`component/`) — serves the overlay page and
+  backgrounds over HTTP, now-playing metadata, and a 64-band FFT spectrum over
+  WebSocket, all in-process. Servers start and stop with foobar2000.
+- **Overlay** (`nowplaying-overlay.html`) — the now-playing card OBS renders.
 - **Configurator** (`configurator.html`) — a visual GUI for tweaking every overlay
   setting with a live preview, then exporting a ready-to-use overlay HTML.
 
 ---
 
-## Running it
+## Setup
 
-No build step — the HTML + servers run directly from the repo:
+1. Build `foo_obs_overlay.fb2k-component` (see **Building from source** below) or
+   grab it from the [Releases](https://github.com/Toni19944/obs-foobar-spotify-overlay/releases)
+   page if a component build is attached.
+2. Double-click the `.fb2k-component` file (or use foobar2000 → Preferences →
+   Components → Install) and let foobar2000 restart.
+3. In OBS, add a **Browser Source** pointing at `http://localhost:8081/` with a
+   transparent background (RGBA `0,0,0,0`).
 
-```
-nowplaying-overlay.html   # the overlay OBS points at
-configurator.html         # visual settings editor
-serve.bat                 # starts the overlay + spectrum servers
-stop.bat                  # stops them
-overlay-server.ps1        # static + Beefweb proxy server
-spectrum-server.py        # FFT/WebSocket visualizer server
-bg/                       # optional background images
-```
+That's it — play a track and the card, backgrounds, and spectrum glow are live.
 
-The spectrum visualizer needs Python with a few packages:
+### Requirements
 
-```
-pip install sounddevice numpy scipy websockets
-```
-
-Then double-click `serve.bat` and add a Browser Source in OBS pointing at the overlay
-(default `http://localhost:8081/nowplaying-overlay.html`). Set the OBS source background
-to transparent (RGBA `0,0,0,0`). `stop.bat` shuts both servers down again.
-
----
-
-## Requirements
-
-- **foobar2000** with [Beefweb Remote Control](https://github.com/hyperblast/beefweb).
+- **foobar2000 v2.x, 64-bit** — no other components needed.
 - [OBS Studio](https://obsproject.com/) (or any tool with a browser source).
-- **Python 3.8+** — only for the spectrum visualizer.
-
----
-
-## Ports
-
-| Port   | Used for                          |
-|--------|-----------------------------------|
-| `8880` | Beefweb (foobar2000 API)          |
-| `8081` | Overlay server (what OBS connects to) |
-| `9001` | Spectrum server (visualizer data) |
-
-`8880` is set in Beefweb's preferences and `overlay-server.ps1`, `8081` in
-`overlay-server.ps1` and the overlay HTML, and `9001` in `spectrum-server.py` and the
-overlay HTML.
 
 ---
 
 ## Configuration
 
-Open **`configurator.html`** in any browser to adjust the card shape, colours, background
-images, and more with a live preview, then export a ready-to-use overlay. You can also
-edit the `CONFIG` and `:root` CSS-variable blocks near the top of
-`nowplaying-overlay.html` directly. The visualizer settings live in `spectrum-server.py`
-(capture device, bands, gain) and in the overlay HTML (glow colour, blur, depth).
+All runtime settings live in **foobar2000 → Preferences → Tools → OBS Overlay**:
+
+| Setting | Default | Notes |
+|---------|---------|-------|
+| Overlay (HTTP) port | `8081` | what OBS connects to |
+| Spectrum (WebSocket) port | `9001` | visualizer data |
+| Background folder | `<profile>\foo_obs_overlay\bg` | default images are extracted here on first run — add/remove your own freely |
+| Spectrum timing offset | `0 ms` | ±500 ms; shift the spectrum earlier/later if your audio chain adds delay |
+
+Apply restarts the servers on the spot — no foobar2000 restart needed.
+
+For the overlay's **look** (card shape, colours, glow, blur, backgrounds), open
+**`configurator.html`** in any browser, tweak with live preview, and export a
+ready-to-use overlay HTML. You can also edit the `CONFIG` and `:root` CSS-variable
+blocks near the top of `nowplaying-overlay.html` directly.
 
 ![configurator preview](configurator-preview.png)
 
 ---
 
-## Looking for the desktop app?
+## Building from source
 
-The GUI control panel and its bundled executable were retired from the main tree. If you
-still want them:
+Needs Visual Studio 2022+ Build Tools (C++ x64 workload) — CMake and Ninja are
+included with them.
+
+```
+"C:\Program Files (x86)\Microsoft Visual Studio\<ver>\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+cmake -S component -B component/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build component/build
+```
+
+Output: `component/build/foo_obs_overlay.fb2k-component` (and the raw DLL).
+The build embeds `nowplaying-overlay.html` and `bg/` byte-for-byte, so overlay
+edits require a rebuild to ship inside the component.
+
+The DSP parity test (compares the component's spectrum pipeline against the
+captured legacy reference) runs with:
+
+```
+component/build/oracle_runner.exe tests/parity/reference/reference.wav tests/parity/reference/reference.jsonl
+```
+
+---
+
+## Spotify / desktop app version
+
+Spotify support and the standalone desktop app (bundled exe, no foobar2000
+required) live in the **v0.1.1** line, preserved in full:
 
 - The [`v0.1.1` release](https://github.com/Toni19944/obs-foobar-spotify-overlay/releases/tag/v0.1.1)
-  carries the last prebuilt app (`FoobarOverlay-v0.1.1-win64.zip`).
-- The `archive/exe-bundle` branch is the home of the exe build files (`launcher/`,
-  `packaging/`, `BUILD.md`) for anyone building it from source.
+  has the last prebuilt app (`FoobarOverlay-v0.1.1-win64.zip`) and matching source.
+- The [`archive/exe-bundle`](https://github.com/Toni19944/obs-foobar-spotify-overlay/tree/archive/exe-bundle)
+  branch is the same tree browsable on GitHub — build instructions in its
+  `BUILD.md` (Python 3.12 + PyInstaller), Spotify overlay under
+  `Now-Playing-Spotify/`, exe tooling under `launcher/` and `packaging/`.
+
+The exe line runs the older external-server stack and is kept as-is; new
+development happens on the foobar2000 component.
 
 ---
 
