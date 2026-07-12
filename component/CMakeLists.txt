@@ -69,7 +69,13 @@ add_custom_command(
 set(COMPONENT_SOURCES
     src/foo_obs_overlay.cpp
     src/settings.cpp
-    src/dsp/spectrum_pipeline.cpp)
+    src/dsp/spectrum_pipeline.cpp
+    src/audio/vis_source.cpp
+    src/player/now_playing.cpp
+    src/assets/asset_extract.cpp
+    src/net/path_guard.cpp
+    src/net/http_server.cpp
+    src/net/ws_broadcaster.cpp)
 
 add_library(foo_obs_overlay SHARED
     ${COMPONENT_SOURCES}
