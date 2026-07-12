@@ -57,10 +57,22 @@ All runtime settings live in **foobar2000 → Preferences → Tools → OBS Over
 
 Apply restarts the servers on the spot — no foobar2000 restart needed.
 
-For the overlay's **look** (card shape, colours, glow, blur, backgrounds), open
-**`configurator.html`** in any browser, tweak with live preview, and export a
-ready-to-use overlay HTML. You can also edit the `CONFIG` and `:root` CSS-variable
-blocks near the top of `nowplaying-overlay.html` directly.
+### Changing the overlay's look
+
+The component serves `nowplaying-overlay.html` from memory — the page is embedded
+into the DLL at build time, byte-for-byte. That means **look changes require a
+rebuild**:
+
+1. Open **`configurator.html`** in any browser, tweak the card shape, colours,
+   glow, blur, etc. with live preview, and export the overlay HTML — or edit the
+   `CONFIG` and `:root` CSS-variable blocks near the top of
+   `nowplaying-overlay.html` directly.
+2. Save/overwrite the repo-root `nowplaying-overlay.html` with the result.
+3. Rebuild the component (see below) and reinstall the `.fb2k-component`.
+
+No rebuild is needed for: ports, background folder, timing offset (Preferences),
+URL flags like `?hideWhenPaused=1`, or the background images themselves — the
+bg folder is read live, add/remove images anytime.
 
 ![configurator preview](configurator-preview.png)
 
