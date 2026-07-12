@@ -75,7 +75,8 @@ set(COMPONENT_SOURCES
     src/assets/asset_extract.cpp
     src/net/path_guard.cpp
     src/net/http_server.cpp
-    src/net/ws_broadcaster.cpp)
+    src/net/ws_broadcaster.cpp
+    src/prefs/prefs_page.cpp)
 
 add_library(foo_obs_overlay SHARED
     ${COMPONENT_SOURCES}
@@ -86,7 +87,8 @@ add_library(foo_obs_overlay SHARED
 target_include_directories(foo_obs_overlay PRIVATE src)
 target_link_libraries(foo_obs_overlay PRIVATE
     fb2k_sdk civetweb kissfft
-    ${SDK_ROOT}/foobar2000/shared/shared-x64.lib)
+    ${SDK_ROOT}/foobar2000/shared/shared-x64.lib
+    comctl32 ole32)
 set_target_properties(foo_obs_overlay PROPERTIES PREFIX "")
 
 # ---------------------------------------------------------------- oracle

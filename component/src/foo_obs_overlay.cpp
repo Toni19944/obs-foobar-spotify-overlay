@@ -7,6 +7,7 @@
 #include "audio/vis_source.h"
 #include "net/http_server.h"
 #include "net/ws_broadcaster.h"
+#include "server_control.h"
 #include "settings.h"
 
 DECLARE_COMPONENT_VERSION(
