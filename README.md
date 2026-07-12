@@ -57,6 +57,19 @@ All runtime settings live in **foobar2000 → Preferences → Tools → OBS Over
 
 Apply restarts the servers on the spot — no foobar2000 restart needed.
 
+### Browser-source URL flags
+
+The overlay page itself understands a few query parameters:
+
+| Flag | Example | Effect |
+|------|---------|--------|
+| `hideWhenPaused=1` | `http://localhost:8081/?hideWhenPaused=1` | hide the card while playback is paused |
+| `port=<n>` | `http://localhost:9080/?port=9080` | tell the page which overlay port to poll — **required if you changed the overlay port** in Preferences (the page's internal default is 8081) |
+| `spectrumPort=<n>` | `http://localhost:8081/?spectrumPort=9500` | same for the spectrum WebSocket — **required if you changed the spectrum port** (internal default 9001) |
+
+Flags combine with `&`, e.g.
+`http://localhost:9080/?port=9080&spectrumPort=9500&hideWhenPaused=1`.
+
 ### Changing the overlay's look
 
 The component serves `nowplaying-overlay.html` from memory — the page is embedded
