@@ -39,7 +39,9 @@ target_link_libraries(fb2k_sdk PUBLIC pfc)
 add_library(civetweb STATIC third_party/civetweb/src/civetweb.c)
 target_include_directories(civetweb PUBLIC third_party/civetweb/include)
 # Minimal feature set (R2): HTTP handlers + WebSocket, no TLS/CGI/file serving.
-target_compile_definitions(civetweb PRIVATE NO_SSL NO_CGI NO_FILES NO_CACHING USE_WEBSOCKET)
+# SOCKET_TIMEOUT_QUANTUM=450: stop-flag re-check granularity (ms) for prompt
+# shutdown (feature 014). #if !defined-guarded in civetweb.c:472 — no vendored edit.
+target_compile_definitions(civetweb PRIVATE NO_SSL NO_CGI NO_FILES NO_CACHING USE_WEBSOCKET SOCKET_TIMEOUT_QUANTUM=450)
 target_link_libraries(civetweb PUBLIC Ws2_32)
 
 # ---------------------------------------------------------------- KissFFT
