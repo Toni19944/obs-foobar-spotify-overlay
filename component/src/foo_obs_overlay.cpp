@@ -3,6 +3,8 @@
 // spectrum-server.py runtime.
 #include <SDK/foobar2000.h>
 
+#include <thread>
+
 #include "assets/asset_extract.h"
 #include "audio/vis_source.h"
 #include "net/http_server.h"
@@ -35,9 +37,19 @@ void start_servers() {
 }
 
 void stop_servers() {
-    // R12 shutdown order: WS first (tick -> senders -> context), then HTTP.
-    g_ws.stop();
-    g_http.stop();
+    // Feature 014: stop both servers concurrently. Each mg_stop() spins up to
+    // one SOCKET_TIMEOUT_QUANTUM (~450 ms) waiting for its blocked master/worker
+    // threads to notice the stop flag; running them on two short-lived threads
+    // overlaps the quanta instead of summing them. The contexts are disjoint —
+    // separate sockets, worker pools, and registries (g_clients is WS-only,
+    // mutex-guarded) — so this is race-free. Each server keeps its own internal
+    // order (WS: tick -> senders -> context); there is no inter-server order.
+    // Both threads join before returning, so teardown stays synchronous inside
+    // on_quit().
+    std::thread ws_stop([] { g_ws.stop(); });
+    std::thread http_stop([] { g_http.stop(); });
+    ws_stop.join();
+    http_stop.join();
 }
 
 void restart_servers() {
