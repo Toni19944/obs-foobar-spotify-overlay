@@ -48,6 +48,25 @@
     overflow: hidden;
   }
 
+  /* ── MIRROR STAGE ─────────────────────────────────────────────
+     Positioning context for the outward mirror canvas. That canvas
+     cannot live inside .card-wrap: .card-wrap's overflow:hidden is
+     exactly the clip that crops the inner glow to the card edge, and
+     that clip stays. Inert when the mirror is off — position:relative
+     and nothing else, so it has no layout effect of its own. Must never
+     gain overflow, transform, filter, or contain — any of those would
+     clip the mirror or reparent it into a new stacking context and break
+     the outward bleed. */
+  .stage { position: relative; }
+
+  #vis-mirror {
+    position: absolute;
+    pointer-events: none;
+    /* opacity and filter are set at runtime from CONFIG.MIRROR_* when the
+       mirror layer is created; left/top/width/height are set as percentages
+       in visResize() (not inset — see that function for why) */
+  }
+
   #vis-canvas {
     position: absolute;
     inset: 0;
@@ -182,27 +201,31 @@
 </head>
 <body>
 
-<!-- Wrapper exists so box-shadow glow isn't clipped by card's overflow:hidden -->
-<div class="card-wrap" id="card-wrap">
-  <!-- Spectrum canvas — sits over the card border, pointer-events:none -->
-  <canvas id="vis-canvas"></canvas>
-  <div class="card" id="card">
-    <div class="bg-layer">
-      <img class="bg-img" id="bg-a" src="" alt="" decoding="async">
-      <img class="bg-img" id="bg-b" src="" alt="" decoding="async">
-    </div>
-    <div class="content">
-      <div class="marquee-clip" id="artist-clip">
-        <div class="inner artist" id="artist">Artist</div>
+<!-- .stage is the positioning context for the outward mirror canvas (#vis-mirror,
+     created at runtime only when the mirror is enabled). It is inert otherwise. -->
+<div class="stage" id="stage">
+  <!-- Wrapper exists so box-shadow glow isn't clipped by card's overflow:hidden -->
+  <div class="card-wrap" id="card-wrap">
+    <!-- Spectrum canvas — sits over the card border, pointer-events:none -->
+    <canvas id="vis-canvas"></canvas>
+    <div class="card" id="card">
+      <div class="bg-layer">
+        <img class="bg-img" id="bg-a" src="" alt="" decoding="async">
+        <img class="bg-img" id="bg-b" src="" alt="" decoding="async">
       </div>
-      <div class="middle-row">
-        <div class="progress-bar">
-          <div class="progress-fill" id="progress-fill"></div>
+      <div class="content">
+        <div class="marquee-clip" id="artist-clip">
+          <div class="inner artist" id="artist">Artist</div>
         </div>
-        <div class="timer" id="timer">0:00 / 0:00</div>
-      </div>
-      <div class="marquee-clip" id="track-clip">
-        <div class="inner track" id="track">Track Title</div>
+        <div class="middle-row">
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="timer" id="timer">0:00 / 0:00</div>
+        </div>
+        <div class="marquee-clip" id="track-clip">
+          <div class="inner track" id="track">Track Title</div>
+        </div>
       </div>
     </div>
   </div>
@@ -250,6 +273,7 @@ const CONFIG = {
   // This only affects the background image and does not touch the
   // existing glow/visualizer system in any way.
   BG_MOTION: false,
+  BG_MOTION_TARGET: 'image',  // 'image' (default) or 'card' — see bgMotionTarget URL flag
   BG_MOTION_BANDS: 6,          // group server FFT into 6 broad bands
   BG_BASE_BLUR: 0.10,          // extra blur always present on top of --img-blur
   BG_BLUR_MAX_ADD: 0.83,       // FFT blur modulation stays very small
@@ -259,6 +283,60 @@ const CONFIG = {
   BG_BLUR_SMOOTH: 0.032,       // slightly faster inertia for blur
   BG_DELAY_SMOOTH: 0.020,      // intentional lag vs foreground glow
   BG_MICRO_SMOOTH: 0.045,      // heavily smoothed high-band micro motion
+  // 'card' target only. Deliberately NOT backdrop-filter — that only
+  // samples content actually behind the element WITHIN the page, and this
+  // page has nothing there (transparent body); it cannot reach through to
+  // whatever OBS composites underneath a transparent browser source, so it
+  // never reliably rendered in OBS. Also deliberately NOT `filter:
+  // brightness()` — that's MULTIPLICATIVE (scales existing RGB by X), and
+  // the card's background is pure black (rgba(0,0,0,...)); 0 * anything
+  // is still 0, so it could never visibly brighten the card regardless of
+  // amplitude. This is an ADDITIVE inset glow instead (box-shadow), which
+  // paints real light onto the black background rather than trying to
+  // scale it — `inset` so it can't be clipped by card-wrap's overflow:
+  // hidden the way an outward glow could.
+  // Driven by bgDelayedMid (the same smoothed FFT mid-band signal as the
+  // image-mode blur, already delay-smoothed via BG_DELAY_SMOOTH) rather
+  // than a sharp peak-follower — a gentle continuous wash, not a flash on
+  // every transient.
+  // Reach (blur+spread) is FIXED, not scaled by the signal — bgDelayedMid
+  // typically sits low (0.03-0.17) even during normal listening, so
+  // scaling the *reach* by it meant the glow only ever got big enough to
+  // hit the card's center on a rare near-maximum peak, leaving the center
+  // permanently black otherwise. Large fixed spread/blur means the wash
+  // always reaches the full card regardless of size; only ALPHA (how
+  // visible it is) responds to the music, which is what actually needs to
+  // "flash". Low max alpha keeps it subtle so it doesn't compete with the
+  // spectrum/glow visualizer for the same border-area attention.
+  CARD_FLASH_GLOW_BLUR:   100,   // inset glow blur radius (px) — fixed, soft edge transition
+  CARD_FLASH_GLOW_SPREAD: 250,   // inset glow spread (px) — fixed, reaches well past center on typical card sizes
+  CARD_FLASH_GLOW_ALPHA:  0.35,  // inset glow opacity (white) at full signal — this is what pulses with the music
+
+  // ── MIRRORED GLOW (outward bleed) ────────────────────────────
+  // Opt-in second copy of the border visualizer drawn OUTSIDE the card,
+  // so the glow bleeds past the edge instead of stopping at the hard cut
+  // produced by .card-wrap's overflow:hidden. That clip STAYS — it is
+  // what crops the inner glow, and the inner glow is unchanged.
+  //
+  // Both layers go through the same drawBands() renderer, at the same 44
+  // perimeter positions, reading the same smoothed visBands; only the
+  // sign of the perimeter normal differs. So they are frame-locked, they
+  // cannot drift apart as the look is tuned, and there is no second
+  // smoothing pass and no second WebSocket read.
+  //
+  // The mirror lives on its own canvas BEHIND the card. The mirrored bars
+  // point outward, but their blur also smears inward across the border;
+  // the card's own background (rgba(0,0,0,0.97) — effectively opaque)
+  // occludes that smear. Bleed outside, today's look inside, and because
+  // nothing is masked there is no seam at the border.
+  //
+  // OFF by default: with no `mirror` flag no element is created, no 2D
+  // context is allocated and nothing extra is drawn per frame.
+  MIRROR:         false,
+  MIRROR_SIZE:    22,    // outward bar depth (px) — matches VIS_BAR_DEPTH
+  MIRROR_OPACITY: 0.55,  // layer opacity — CSS opacity on the canvas, GPU-composited
+  MIRROR_BLUR:    12,    // blur radius (px) — matches VIS_BLUR so the outward
+                         // bleed is a true mirror of the inner glow's softness
 
   // ── RENDER RATE CAP ──────────────────────────────────────────
   // Caps how often the canvas is redrawn and bg motion is updated.
@@ -267,8 +345,67 @@ const CONFIG = {
   RENDER_FPS: 24,
 };
 
+// ── Runtime overrides (additive, default-preserving) ──
+// Optional URL query params let a second OBS browser source (or the GUI)
+// change ports / enable pause-hide / re-skin the card WITHOUT editing this
+// file. With NO params (the default OBS URL http://localhost:8081/) every
+// value below is byte-for-behaviour identical to today: ENDPOINT/bg-list
+// keep :8081, SPECTRUM_PORT keeps 9001, and the card never hides on pause.
+CONFIG.OVERLAY_PORT     = '8081';
+CONFIG.HIDE_WHEN_PAUSED = false;
+(function applyRuntimeOverrides() {
+  try {
+    const q = new URLSearchParams(location.search);
+    const overlayPort = q.get('port');
+    const specPort    = q.get('spectrumPort');
+    if (overlayPort) {
+      CONFIG.OVERLAY_PORT = overlayPort;
+      // Spotify keeps its own metadata path — only the port is inherited
+      // from the flag (the reference overlay rebuilds a Beefweb path here).
+      CONFIG.ENDPOINT = `http://localhost:${overlayPort}/api/spotify/current`;
+    }
+    if (specPort) CONFIG.SPECTRUM_PORT = parseInt(specPort, 10) || CONFIG.SPECTRUM_PORT;
+    CONFIG.HIDE_WHEN_PAUSED = q.get('hideWhenPaused') === '1';
+
+    // ── Per-scene look overrides (additive, default-preserving) ──
+    // Let a second OBS browser source (e.g. a BRB/intermission scene) render
+    // a differently-sized/opacity/motion card without touching the default
+    // gaming-scene source, which passes none of these params.
+    const rootStyle    = document.documentElement.style;
+    const cardWidth     = parseFloat(q.get('cardWidth'));
+    const cardHeight    = parseFloat(q.get('cardHeight'));
+    const cardRadius    = parseFloat(q.get('cardRadius'));
+    const cardOpacity   = parseFloat(q.get('cardOpacity'));
+    const imgOpacityVal = parseFloat(q.get('imgOpacity'));
+    const bgMotion       = q.get('bgMotion');
+
+    if (!isNaN(cardWidth))   rootStyle.setProperty('--card-width', cardWidth + 'px');
+    if (!isNaN(cardHeight))  rootStyle.setProperty('--card-height', cardHeight + 'px');
+    // --card-radius is shared by .card, .card-wrap and #vis-canvas, so one
+    // root-level override keeps the card, its clip and the glow canvas in sync.
+    if (!isNaN(cardRadius))  rootStyle.setProperty('--card-radius', cardRadius + 'px');
+    if (!isNaN(cardOpacity)) rootStyle.setProperty('--card-bg', `rgba(0, 0, 0, ${cardOpacity})`);
+    if (!isNaN(imgOpacityVal)) rootStyle.setProperty('--img-opacity', String(imgOpacityVal));
+    if (bgMotion === '1') CONFIG.BG_MOTION = true;
+    else if (bgMotion === '0') CONFIG.BG_MOTION = false;
+
+    if (q.get('bgMotionTarget') === 'card') CONFIG.BG_MOTION_TARGET = 'card';
+
+    // Mirrored outward glow — see the MIRRORED GLOW block in CONFIG.
+    // Absent or unparseable values fall through to the defaults.
+    const mirrorSize    = parseFloat(q.get('mirrorSize'));
+    const mirrorOpacity = parseFloat(q.get('mirrorOpacity'));
+    const mirrorBlur    = parseFloat(q.get('mirrorBlur'));
+    if (q.get('mirror') === '1') CONFIG.MIRROR = true;
+    if (!isNaN(mirrorSize))    CONFIG.MIRROR_SIZE    = mirrorSize;
+    if (!isNaN(mirrorOpacity)) CONFIG.MIRROR_OPACITY = mirrorOpacity;
+    if (!isNaN(mirrorBlur))    CONFIG.MIRROR_BLUR    = mirrorBlur;
+  } catch (_) { /* keep defaults */ }
+})();
+
 // ── Elements ───────────────────────────────────────────────────
 const cardWrap  = document.getElementById('card-wrap');
+const stage     = document.getElementById('stage');
 const card      = document.getElementById('card');
 const elArtist  = document.getElementById('artist');
 const elTrack   = document.getElementById('track');
@@ -354,7 +491,7 @@ function nextImage() {
 async function loadImageList() {
   if (!CONFIG.IMAGES) return;
   try {
-    const res   = await fetch('http://localhost:8081/bg-list', { cache: 'no-store' });
+    const res   = await fetch(`http://localhost:${CONFIG.OVERLAY_PORT}/bg-list`, { cache: 'no-store' });
     const files = await res.json();
     if (!files.length) return;
     allImages = files;
@@ -465,11 +602,14 @@ function hideCard() {
 // - Shapes signal with a curve to soften low-level chatter
 // - Uses delayed targets + inertia so motion trails behind glow
 
+const BG_MOTION_TARGET = CONFIG.BG_MOTION_TARGET;
 const BG_BAND_GROUPS = CONFIG.BG_MOTION_BANDS;
 const bgGroupedBands = new Array(BG_BAND_GROUPS).fill(0);
 let bgDelayedLow  = 0, bgDelayedMid  = 0, bgDelayedHigh = 0;
 let bgZoomValue   = 1, bgBlurValue   = CONFIG.BG_BASE_BLUR, bgMicroValue = 0;
-const bgEnabled   = CONFIG.IMAGES && CONFIG.BG_MOTION;
+// 'card' mode doesn't touch the background image at all, so it must not
+// depend on CONFIG.IMAGES; 'image' mode is unchanged (still requires it).
+const bgEnabled   = CONFIG.BG_MOTION && (BG_MOTION_TARGET === 'card' || CONFIG.IMAGES);
 
 // Soft shaping to reduce chatter/spikes and keep motion subtle
 function bgShape(v) {
@@ -492,24 +632,42 @@ function bgRegroup(src) {
 function bgAnimate(t) {
   if (!bgEnabled) return;
 
-  // Broad frequency mapping:
-  // - bass drives slow zoom
-  // - mids drive blur
-  // - highs add tiny, heavily-smoothed micro-variation
+  // Broad frequency mapping (shared by both motion targets):
+  // - bass drives slow zoom (image target only)
+  // - mids drive blur (both targets)
+  // - highs add tiny, heavily-smoothed micro-variation (image target only)
   const lowRaw  = (bgGroupedBands[0] * 0.72) + (bgGroupedBands[1] * 0.28);
   const midRaw  = (bgGroupedBands[2] * 0.55) + (bgGroupedBands[3] * 0.45);
   const highRaw = (bgGroupedBands[4] * 0.45) + (bgGroupedBands[5] * 0.55);
 
-  // Shape + soft clamp so peaks do not snap the image
+  // Shape + soft clamp so peaks do not snap the target
   const lowTarget  = Math.min(0.95, bgShape(lowRaw));
   const midTarget  = Math.min(0.85, bgShape(midRaw) * 0.9);
   const highTarget = Math.min(0.70, bgShape(highRaw) * 0.7);
 
-  // Intentional response delay: background trails the foreground glow
+  // Intentional response delay: motion trails the foreground glow
   bgDelayedLow  += (lowTarget  - bgDelayedLow)  * CONFIG.BG_DELAY_SMOOTH;
   bgDelayedMid  += (midTarget  - bgDelayedMid)  * (CONFIG.BG_DELAY_SMOOTH * 1.15);
   bgDelayedHigh += (highTarget - bgDelayedHigh) * (CONFIG.BG_DELAY_SMOOTH * 0.9);
 
+  if (BG_MOTION_TARGET === 'card') {
+    // No zoom here — scaling the card would visibly distort its text/border,
+    // unlike the invisible background image. Deliberately an ADDITIVE inset
+    // glow (box-shadow), NOT `filter: brightness()` — see the
+    // CARD_FLASH_GLOW_BLUR comment in CONFIG for why brightness() can't
+    // work here (multiplicative on a black background).
+    //
+    // Driven by bgDelayedMid — a gentle continuous wash synced to the mids,
+    // not a sharp peak flash. Reach (blur/spread) is fixed so the wash
+    // always covers the full card; only alpha responds to the music.
+    const glowAlpha = bgDelayedMid * CONFIG.CARD_FLASH_GLOW_ALPHA;
+
+    card.style.setProperty('box-shadow',
+      `inset 0 0 ${CONFIG.CARD_FLASH_GLOW_BLUR}px ${CONFIG.CARD_FLASH_GLOW_SPREAD}px rgba(255, 255, 255, ${glowAlpha})`);
+    return;
+  }
+
+  // ── 'image' target (default, unchanged from before this feature) ──
   // Slow baseline breathing independent of FFT
   const baselineZoom = 1 + CONFIG.BG_BASELINE_ZOOM * (0.5 + 0.5 * Math.sin(t * 0.16));
 
@@ -546,6 +704,95 @@ const visCtx     = visCanvas.getContext('2d');
 const VIS_BANDS  = CONFIG.VIS_BANDS;
 const visBands   = new Float64Array(VIS_BANDS);  // smoothed
 const visRaw     = new Float64Array(VIS_BANDS);  // raw from WebSocket
+
+// ── MIRRORED GLOW ────────────────────────────────────────────────
+// Built only when the mirror is enabled. When off, mirrorCanvas stays
+// null, no element is created, no 2D context is allocated, and
+// mirrorDraw() is never called — the page is exactly as it was.
+const mirrorOn = CONFIG.VISUALIZER && CONFIG.MIRROR;
+
+// Visible reach is roughly the bar depth plus about twice the blur
+// radius. The canvas is inset by -MIRROR_MARGIN on all four sides so
+// the blur isn't clipped, and body padding grows to match so the bleed
+// isn't cut off by the top/left edge of the OBS browser source. Growing
+// the padding is what creates that room, so with the mirror on the card
+// sits (MIRROR_MARGIN - 16)px further down-right in the page than it
+// does today — nudge that scene's browser source once to compensate.
+const MIRROR_MARGIN = mirrorOn
+  ? Math.ceil(Math.max(16, CONFIG.MIRROR_SIZE + 2 * CONFIG.MIRROR_BLUR))
+  : 0;
+
+let mirrorCanvas = null;
+let mirrorCtx    = null;
+
+if (mirrorOn) {
+  mirrorCanvas = document.createElement('canvas');
+  mirrorCanvas.id = 'vis-mirror';
+  // left/top/width/height (not inset — see visResize()) are set from
+  // script once the inner canvas's bitmap size is known.
+  mirrorCanvas.style.opacity = String(CONFIG.MIRROR_OPACITY);
+  // Same GPU-composited chained filter the inner canvas uses — not a
+  // per-stroke ctx.filter.
+  mirrorCanvas.style.filter  =
+    `blur(${CONFIG.MIRROR_BLUR}px) brightness(${CONFIG.VIS_BRIGHTNESS})`;
+  // Insert BEFORE .card-wrap so paint order follows DOM order and the
+  // card plus the untouched inner glow stay on top. The mirror is also
+  // masked to the region OUTSIDE the card (see applyMirrorMask), so it
+  // cannot paint over the card at all.
+  stage.insertBefore(mirrorCanvas, cardWrap);
+  mirrorCtx = mirrorCanvas.getContext('2d');
+  // Reserve page room so the outward bleed isn't clipped at the edge.
+  document.body.style.padding = `${MIRROR_MARGIN}px`;
+}
+
+// Hard-cut the mirror at the card's edge, mirroring how .card-wrap's
+// overflow:hidden crops the inner glow — same cut, opposite side.
+//
+// This MUST be an element-level mask, not an in-canvas erase. MIRROR_BLUR
+// is a CSS filter on the element, and CSS applies filter BEFORE mask, so
+// the mask cuts the already-blurred result. Erasing inside the bitmap
+// instead would just let the blur smear the soft edge back over the card
+// — which is the artifact this removes.
+//
+// The mask is an SVG whose viewBox is in mirror-BITMAP units with
+// preserveAspectRatio="none", plus mask-size:100% 100%. That maps bitmap
+// units onto the element box exactly the way the canvas bitmap itself is
+// mapped, so the cut stays pixel-locked to the glow through the live
+// webfont stretch described in visResize().
+function applyMirrorMask() {
+  const EW = mirrorCanvas.width;
+  const EH = mirrorCanvas.height;
+  const M  = MIRROR_MARGIN;
+  const W  = visCanvas.width;
+  const H  = visCanvas.height;
+  // Same radius the glow geometry uses, so the knockout follows the exact
+  // curve the bars are laid out along. Clamped like a CSS corner radius.
+  const R  = Math.max(0, Math.min(cachedCardRadius, W / 2, H / 2));
+
+  const hole = R > 0
+    ? `M${M + R},${M}` +
+      `H${M + W - R}A${R},${R} 0 0 1 ${M + W},${M + R}` +
+      `V${M + H - R}A${R},${R} 0 0 1 ${M + W - R},${M + H}` +
+      `H${M + R}A${R},${R} 0 0 1 ${M},${M + H - R}` +
+      `V${M + R}A${R},${R} 0 0 1 ${M + R},${M}Z`
+    : `M${M},${M}H${M + W}V${M + H}H${M}Z`;
+
+  // fill-rule="evenodd" turns the inner subpath into a hole: opaque
+  // everywhere outside the card, fully transparent inside it.
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${EW} ${EH}" ` +
+    `preserveAspectRatio="none">` +
+    `<path fill="#fff" fill-rule="evenodd" ` +
+    `d="M0,0H${EW}V${EH}H0Z${hole}"/></svg>`;
+  const url = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+
+  mirrorCanvas.style.maskImage        = url;
+  mirrorCanvas.style.webkitMaskImage  = url;
+  mirrorCanvas.style.maskSize         = '100% 100%';
+  mirrorCanvas.style.webkitMaskSize   = '100% 100%';
+  mirrorCanvas.style.maskRepeat       = 'no-repeat';
+  mirrorCanvas.style.webkitMaskRepeat = 'no-repeat';
+}
 
 // (#9) Precomputed band positions — recalculated on resize only
 let bandPositions = null;  // [{x, y, nx, ny}, ...]
@@ -605,14 +852,85 @@ function visResize() {
   visCanvas.width  = cardWrap.offsetWidth;
   visCanvas.height = cardWrap.offsetHeight;
   computeBandPositions();
+  if (mirrorCanvas) {
+    // Bitmap stays pinned to the inner canvas's own bitmap size (frozen
+    // at whatever cardWrap measured on this call), padded by the margin.
+    mirrorCanvas.width  = visCanvas.width  + 2 * MIRROR_MARGIN;
+    mirrorCanvas.height = visCanvas.height + 2 * MIRROR_MARGIN;
+
+    // #vis-canvas gets its CSS box from `width:100%; height:100%`, so it
+    // silently re-stretches on every layout pass to match cardWrap's
+    // LIVE size — including any growth a webfont swap adds after this
+    // very call, well before any 'resize' event could fire again. Its
+    // bitmap (set two lines above) never gets that update, so the inner
+    // glow already renders at a small, pre-existing, approved stretch.
+    // For the mirror to stay pixel-locked to it, its box must inherit
+    // that same live stretch rather than freezing to today's cardWrap
+    // size in px. Expressing left/top/width/height as percentages of
+    // .stage does that: mirrorCanvas is absolutely positioned and
+    // cardWrap is .stage's only in-flow child, so .stage's box always
+    // equals cardWrap's current box, and percentages are re-resolved by
+    // the browser on every layout — tracking the same live scale the
+    // inner canvas gets for free, even though computed here only once.
+    mirrorCanvas.style.left   = `${-(MIRROR_MARGIN / visCanvas.width)  * 100}%`;
+    mirrorCanvas.style.top    = `${-(MIRROR_MARGIN / visCanvas.height) * 100}%`;
+    mirrorCanvas.style.width  = `${(mirrorCanvas.width  / visCanvas.width)  * 100}%`;
+    mirrorCanvas.style.height = `${(mirrorCanvas.height / visCanvas.height) * 100}%`;
+
+    // Rebuilt here because it is expressed in bitmap units, which the two
+    // assignments above can change.
+    applyMirrorMask();
+  }
 }
 visResize();
 window.addEventListener('resize', visResize);
 
+// Shared band renderer for both glow layers. The inner and mirrored
+// glows differ only in three values — which context they paint into,
+// which way the perimeter normal points, and the canvas-origin offset —
+// so they go through one renderer and cannot drift apart as the look is
+// tuned. Reads visBands; never writes it (smoothing is visDraw's alone).
+//   ctx    — target 2D context
+//   depth  — bar length in px at full amplitude
+//   sign   — +1 draws inward (the original glow), -1 draws outward
+//   offset — px translation, for canvases larger than the card
+// The caller owns its own clearRect.
+function drawBands(ctx, depth, sign, offset) {
+  ctx.save();
+  ctx.translate(offset, offset);
+
+  // (#6) Reuse line settings across all bands
+  ctx.lineCap = 'round';
+  ctx.lineWidth = cachedBarW;
+
+  for (let i = 0; i < VIS_BANDS; i++) {
+    if (visBands[i] < 0.005) continue;
+
+    const pos   = bandPositions[i];
+    const barH  = visBands[i] * depth;
+    const alpha = visBands[i] * CONFIG.VIS_MAX_OPACITY;
+    const endX  = pos.x + sign * pos.nx * barH;
+    const endY  = pos.y + sign * pos.ny * barH;
+
+    // (#6) Gradient with pre-parsed color channels — (#10) no .toFixed()
+    const grad = ctx.createLinearGradient(pos.x, pos.y, endX, endY);
+    grad.addColorStop(0,   `rgba(${VIS_CR},${VIS_CG},${VIS_CB},${alpha})`);
+    grad.addColorStop(0.4, `rgba(${VIS_CR},${VIS_CG},${VIS_CB},${alpha * 0.6})`);
+    grad.addColorStop(1,   `rgba(${VIS_CR},${VIS_CG},${VIS_CB},0)`);
+
+    ctx.beginPath();
+    ctx.strokeStyle = grad;
+    ctx.moveTo(pos.x, pos.y);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 function visDraw() {
-  const W     = visCanvas.width;
-  const H     = visCanvas.height;
-  const depth = CONFIG.VIS_BAR_DEPTH;
+  const W = visCanvas.width;
+  const H = visCanvas.height;
 
   visCtx.clearRect(0, 0, W, H);
   // (#1) No ctx.filter — blur is handled by CSS on the canvas element
@@ -626,31 +944,18 @@ function visDraw() {
     visBands[i] += (target - visBands[i]) * rate;
   }
 
-  // (#6) Reuse line settings across all bands
-  visCtx.lineCap = 'round';
-  visCtx.lineWidth = cachedBarW;
+  // Inward: sign +1, no offset. This is the original render loop, now
+  // shared with the mirrored layer.
+  drawBands(visCtx, CONFIG.VIS_BAR_DEPTH, 1, 0);
+}
 
-  for (let i = 0; i < VIS_BANDS; i++) {
-    if (visBands[i] < 0.005) continue;
-
-    const pos   = bandPositions[i];
-    const barH  = visBands[i] * depth;
-    const alpha = visBands[i] * CONFIG.VIS_MAX_OPACITY;
-    const endX  = pos.x + pos.nx * barH;
-    const endY  = pos.y + pos.ny * barH;
-
-    // (#6) Gradient with pre-parsed color channels — (#10) no .toFixed()
-    const grad = visCtx.createLinearGradient(pos.x, pos.y, endX, endY);
-    grad.addColorStop(0,   `rgba(${VIS_CR},${VIS_CG},${VIS_CB},${alpha})`);
-    grad.addColorStop(0.4, `rgba(${VIS_CR},${VIS_CG},${VIS_CB},${alpha * 0.6})`);
-    grad.addColorStop(1,   `rgba(${VIS_CR},${VIS_CG},${VIS_CB},0)`);
-
-    visCtx.beginPath();
-    visCtx.strokeStyle = grad;
-    visCtx.moveTo(pos.x, pos.y);
-    visCtx.lineTo(endX, endY);
-    visCtx.stroke();
-  }
+// The outward layer. Same renderer, same bandPositions, same visBands
+// the inner glow just smoothed — only the normal's sign and the canvas
+// offset differ. Because bandPositions is shared, the mirror follows
+// --card-radius automatically, including the cardRadius URL override.
+function mirrorDraw() {
+  mirrorCtx.clearRect(0, 0, mirrorCanvas.width, mirrorCanvas.height);
+  drawBands(mirrorCtx, CONFIG.MIRROR_SIZE, -1, MIRROR_MARGIN);
 }
 
 // ── (#2) Single rAF loop ────────────────────────────────────────
@@ -673,7 +978,12 @@ function animationLoop() {
   bgAnimate(t);
 
   // Visualizer canvas draw
-  if (CONFIG.VISUALIZER) visDraw();
+  if (CONFIG.VISUALIZER) {
+    visDraw();
+    // Must run AFTER visDraw — it consumes the visBands values visDraw
+    // just smoothed, which is what keeps the two layers frame-locked.
+    if (mirrorOn) mirrorDraw();
+  }
 }
 
 // (#8) Start/stop helpers
@@ -723,6 +1033,9 @@ async function fetchNowPlaying() {
     const res  = await fetch(CONFIG.ENDPOINT, { cache: 'no-store' });
     const data = await res.json();
     if (!data.is_playing && !data.item) { hideCard(); isPlaying = false; return; }
+    // hideWhenPaused: treat a paused-but-loaded track like a hidden state,
+    // matching the reference overlay's playbackState==='paused' behaviour.
+    if (CONFIG.HIDE_WHEN_PAUSED && !data.is_playing) { hideCard(); isPlaying = false; return; }
     const item = data.item;
     updateUI({
       trackId:    item.id,
