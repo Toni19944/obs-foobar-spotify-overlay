@@ -237,7 +237,7 @@ const CONFIG = {
   //   Supplies now-playing data + album art. Reference uses Beefweb here.
   ENDPOINT:     'http://localhost:8081/api/spotify/current',  // 8081 = server serve port (8082 is OAuth callback only — FR-008)
   ALBUM_ART_BG: false,  // Spotify album art as card background; mutually exclusive with IMAGES; default off so defaults match the reference (FR-011)
-  VIS_GAIN:     1.0,    // static visualizer gain — Spotify exposes no playback volume, so this replaces the reference's dynamic gain (FR-019)
+  VIS_GAIN:     1.1,    // headroom into the overlay auto-gain (VIS_AGC_*): the loudest recent band maps to ~VIS_GAIN, so >1 lets more bands reach full glow
   // ── METADATA ADAPTER (Spotify) ── end
   POLL_MS:   1000,
   DEMO_MODE: false,
@@ -264,9 +264,21 @@ const CONFIG = {
   VIS_MAX_OPACITY:   0.93,
   VIS_BAR_DEPTH:     22,
   VIS_BLUR:          12,
-  VIS_BRIGHTNESS:    1.8,     // post-blur brightness multiplier — restores glow intensity lost to CSS blur spread (1.0 = none, 1.6 ≈ original ctx.filter look)
+  VIS_BRIGHTNESS:    2.4,     // post-blur brightness multiplier — restores glow intensity lost to CSS blur spread (1.0 = none, 1.6 ≈ original ctx.filter look)
   VIS_SMOOTHING:     0.25,
   VIS_BANDS:         44,
+
+  // ── OVERLAY AUTO-GAIN (volume independence) ──────────────────
+  // The shared spectrum server's per-band AGC decays too slowly (0.995/frame)
+  // to lift quiet input, so at low playback volume the glow stays dim — i.e.
+  // it tracks volume. This fast overlay-side auto-gain normalizes every frame
+  // to the loudest recent band, so glow brightness is independent of how loud
+  // Spotify is playing. Peak rises instantly, falls at VIS_AGC_DECAY/frame,
+  // and is floored by VIS_AGC_FLOOR so true silence stays dark and near-silent
+  // noise isn't amplified to full glow. Raise the floor to keep more loud/quiet
+  // dynamic feel; lower it for the most aggressive normalization.
+  VIS_AGC_DECAY:     0.94,    // per-frame peak fall (~0.3 s half-life at 30 fps)
+  VIS_AGC_FLOOR:     0.02,    // minimum peak — silence stays dark, gain can't run away
   
   // ── BACKGROUND FFT MOTION (independent from visualizer) ──────
   // Separate smoothing/band logic from the visualizer.
@@ -418,6 +430,7 @@ const trackClip = document.getElementById('track-clip');
 
 let imgQueue = [], allImages = [], activeLayer = 'a', lastTitle = '';
 let visGain  = 1.0;  // dynamic gain multiplier derived from foobar volume
+let visAgcPeak = CONFIG.VIS_AGC_FLOOR;  // running peak for the overlay auto-gain (see VIS_AGC_* in CONFIG)
 
 // ── METADATA ADAPTER (Spotify) ── start
 //   Spotify-specific state + static visualizer gain. Reference uses Beefweb +
@@ -1007,9 +1020,22 @@ function connectSpectrum() {
 
       // Feed visualizer (44 bands, own gain)
       if (CONFIG.VISUALIZER) {
+        // Pass 1: map server bands into our band count, tracking this frame's max.
+        let frameMax = 0;
         for (let i = 0; i < VIS_BANDS; i++) {
           const idx = Math.floor(i * data.length / VIS_BANDS);
-          visRaw[i] = Math.min(1, (data[idx] || 0) * visGain);
+          const v = data[idx] || 0;
+          visRaw[i] = v;
+          if (v > frameMax) frameMax = v;
+        }
+        // Overlay auto-gain: peak rises instantly, falls at VIS_AGC_DECAY/frame,
+        // floored by VIS_AGC_FLOOR. Normalizing to it makes the loudest recent
+        // band map to ~VIS_GAIN regardless of playback volume (see VIS_AGC_* / CONFIG).
+        visAgcPeak = Math.max(frameMax, visAgcPeak * CONFIG.VIS_AGC_DECAY, CONFIG.VIS_AGC_FLOOR);
+        const norm = visGain / visAgcPeak;
+        // Pass 2: normalize + clamp.
+        for (let i = 0; i < VIS_BANDS; i++) {
+          visRaw[i] = Math.min(1, visRaw[i] * norm);
         }
       }
 
