@@ -205,17 +205,21 @@ component/build/oracle_runner.exe tests/parity/reference/reference.wav tests/par
 ## Spotify / desktop app version
 
 Spotify support and the standalone desktop app (bundled exe, no foobar2000
-required) live in the **v0.1.1** line, preserved in full:
+required) live on the **`archive/exe-bundle`** branch and its own release line:
 
-- The [`v0.1.1` release](https://github.com/Toni19944/obs-foobar-spotify-overlay/releases/tag/v0.1.1)
-  has the last prebuilt app (`FoobarOverlay-v0.1.1-win64.zip`) and matching source.
+- The [`0.4.1` release](https://github.com/Toni19944/obs-foobar-spotify-overlay/releases/tag/v0.4.1)
+  has the latest prebuilt app (`FoobarOverlay-v0.4.1-win64.zip`). It reads Spotify
+  now-playing from **Windows SMTC** — no login, developer app, or rate limits — keeps
+  the Spotify Web API as an optional fallback, and supports the same per-scene overlay
+  URL flags as the component (mirror glow, card sizing, background motion, pause-hide).
 - The [`archive/exe-bundle`](https://github.com/Toni19944/obs-foobar-spotify-overlay/tree/archive/exe-bundle)
-  branch is the same tree browsable on GitHub — build instructions in its
-  `BUILD.md` (Python 3.12 + PyInstaller), Spotify overlay under
-  `Now-Playing-Spotify/`, exe tooling under `launcher/` and `packaging/`.
+  branch is that tree — build instructions in its `BUILD.md` (Python 3.12 +
+  PyInstaller), Spotify overlay under `Now-Playing-Spotify/`, exe tooling under
+  `launcher/` and `packaging/`, and its own `README.md` for full usage.
 
-The exe line runs the older external-server stack and is kept as-is; new
-development happens on the foobar2000 component.
+The foobar2000 **component** (this repo's main line) remains the primary, actively
+developed path; the bundled desktop app is a parallel line for users who want a
+no-foobar, no-config app.
 
 ---
 
