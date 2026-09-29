@@ -195,8 +195,12 @@ class Orchestrator:
             "BEEFWEB_TARGET": f"http://localhost:{ports.beefwebTarget}",
             "OAUTH_CALLBACK_PORT": str(ports.spotifyCallback),
         }
-        if source_id == SPOTIFY and spotify_env:
-            overlay_env.update(spotify_env)
+        if source_id == SPOTIFY:
+            # Metadata source: 'smtc' (default, local Windows media — no creds
+            # needed) or 'webapi' (Spotify Web API — needs the creds below).
+            overlay_env["METADATA_SOURCE"] = self.settings.metadataSource
+            if spotify_env:
+                overlay_env.update(spotify_env)
 
         # 1) overlay (always for the active source).
         overlay = ManagedService(kind="overlay", source=source_id, port=ports.overlayHttp)

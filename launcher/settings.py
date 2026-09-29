@@ -63,6 +63,7 @@ class AppSettings:
     audioDevice: str = "Line 1"
     previewEnabled: bool = False
     activeProfile: str = "Default"
+    metadataSource: str = "smtc"                # "smtc" (local Windows media, default) | "webapi" (Spotify Web API)
     debug: DebugSettings = field(default_factory=DebugSettings)
     ports: Ports = field(default_factory=Ports)
     profileFlags: ProfileFlags = field(default_factory=ProfileFlags)
@@ -125,6 +126,12 @@ class AppSettings:
             audioDevice=str(raw.get("audioDevice", "Line 1")),
             previewEnabled=bool(raw.get("previewEnabled", False)),
             activeProfile=str(raw.get("activeProfile", "Default")),
+            # Unknown/invalid values heal to the safe local default.
+            metadataSource=(
+                str(raw.get("metadataSource", "smtc")).lower()
+                if str(raw.get("metadataSource", "smtc")).lower() in ("smtc", "webapi")
+                else "smtc"
+            ),
             debug=DebugSettings(
                 showTerminals=bool(debug.get("showTerminals", False)),
                 logToFile=bool(debug.get("logToFile", False)),

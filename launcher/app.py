@@ -383,10 +383,12 @@ class MainWindow(QMainWindow):
             self._status("Select a source (foobar or Spotify) first.")
             return
         spotify_env = None
-        if source == SPOTIFY:
+        if source == SPOTIFY and self.settings.metadataSource == "webapi":
+            # Web API mode needs OAuth creds. SMTC mode (default) reads local
+            # Windows media and needs no Spotify login.
             spotify_env = self.spotify.env_block()
             if not spotify_env:
-                self._status("Connect Spotify before starting the Spotify source.")
+                self._status("Connect Spotify before starting in Web API mode, or switch the metadata source to SMTC.")
                 return
         # Pull fresh flags from the configurator if it's open (bridge).
         self.configurator.refresh_flags()

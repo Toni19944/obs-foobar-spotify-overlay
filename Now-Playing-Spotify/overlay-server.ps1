@@ -8,28 +8,29 @@
 $port = if ($env:OVERLAY_PORT) { [int]$env:OVERLAY_PORT } else { 8081 }
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# ── METADATA ADAPTER (Spotify): token refresh + currently-playing ── start
-#   (T023) AUTH-PLUMBING EDIT — credentials now arrive via the child ENV BLOCK
-#   from the GUI launcher (Authorization Code + PKCE; NO client secret). This
-#   server therefore:
-#     • holds no hardcoded secret,
-#     • never reads/writes the plaintext spotify-token.txt,
-#     • no longer runs the in-process browser OAuth (the GUI owns first-run auth
-#       and the DPAPI-encrypted store).
-#   The render / HTTP / metadata contract (and the 5 s timeout) is unchanged.
-#   The static-file cache, bg-list cache, MIME map, and listener loop below are
-#   the shared (reference-identical) static-serving core.
+# ── METADATA ADAPTER ── start
+#   Two now-playing sources, selected by the GUI via METADATA_SOURCE
+#   (default 'smtc'):
+#     • smtc   — local Windows System Media Transport Controls (the Win+A media
+#                panel). No network, no OAuth, no rate limits. The default.
+#     • webapi — Spotify Web API (Authorization Code + PKCE; creds via the child
+#                env block). Kept as an opt-in fallback, hardened with a call
+#                throttle + Retry-After backoff + last-good cache so a 429 can
+#                never spiral into a multi-hour ban again.
+#   Both return the SAME JSON contract the overlay consumes.
+$MetadataSource      = if ($env:METADATA_SOURCE) { $env:METADATA_SOURCE.ToLower() } else { 'smtc' }
+$SPOTIFY_TIMEOUT_SEC = 5   # bound outbound calls / WinRT awaits so nothing wedges the request loop
 
-# ── Spotify config (from the GUI's env block) ──────────────────
-$CLIENT_ID           = $env:SPOTIFY_CLIENT_ID
-$SPOTIFY_TIMEOUT_SEC = 5   # bound outbound Spotify calls so a slow/failed API never wedges the request loop (FR-010)
+# ── Web API state (used only when $MetadataSource -eq 'webapi') ──
+$CLIENT_ID               = $env:SPOTIFY_CLIENT_ID
+$script:accessToken      = $null
+$script:refreshToken     = $env:SPOTIFY_REFRESH_TOKEN
+$script:tokenExpiry      = [DateTime]::MinValue
+$script:lastGood         = '{"is_playing":false}'
+$script:backoffUntil     = [DateTime]::MinValue
+$script:lastCallAt       = [DateTime]::MinValue
+$WEBAPI_MIN_INTERVAL_SEC = 3   # server-side floor between Spotify calls, independent of the overlay poll rate
 
-# ── Token state ────────────────────────────────────────────────
-$script:accessToken  = $null
-$script:refreshToken = $env:SPOTIFY_REFRESH_TOKEN
-$script:tokenExpiry  = [DateTime]::MinValue
-
-# ── Token helper (PKCE refresh — public client, no secret) ─────
 function Invoke-TokenRefresh {
     try {
         $body = "grant_type=refresh_token&refresh_token=$($script:refreshToken)&client_id=$CLIENT_ID"
@@ -39,30 +40,133 @@ function Invoke-TokenRefresh {
                                       -TimeoutSec $SPOTIFY_TIMEOUT_SEC
         $script:accessToken = $response.access_token
         $script:tokenExpiry = [DateTime]::UtcNow.AddSeconds($response.expires_in - 60)
-        # Spotify may rotate the refresh token; keep the in-memory copy current.
-        # (The GUI's DPAPI store is the durable owner and re-persists on its own
-        # refresh — this process holds the rotated value only for its lifetime.)
         if ($response.refresh_token) { $script:refreshToken = $response.refresh_token }
         Write-Host "Token refreshed." -ForegroundColor DarkGray
     } catch {
-        # A failed refresh degrades gracefully — the currently-playing proxy
-        # returns {"is_playing":false} and the loop stays alive (FR-010).
         Write-Host "Token refresh failed: $_" -ForegroundColor Red
     }
 }
 
-# ── Validate creds (now supplied by the GUI launcher) ──────────
-if (-not $CLIENT_ID -or -not $script:refreshToken) {
-    Write-Host ""
-    Write-Host "  ERROR: Spotify credentials not provided via the env block." -ForegroundColor Red
-    Write-Host "  Launch this server through the GUI and use 'Connect Spotify' first." -ForegroundColor Yellow
-    Write-Host ""
-    exit 1
+# Hardened Web API proxy. Throttles to WEBAPI_MIN_INTERVAL_SEC regardless of how
+# fast the overlay polls, honors Retry-After on 429 by NOT calling until it
+# elapses, caches the last good payload, and only reports not-playing on a
+# genuine 204 — so a rate limit degrades to "holds last track" instead of a
+# death spiral that Spotify escalates into a long ban.
+function Get-WebApiPayload {
+    $now = [DateTime]::UtcNow
+    if ($now -lt $script:backoffUntil) { return $script:lastGood }
+    if (($now - $script:lastCallAt).TotalSeconds -lt $WEBAPI_MIN_INTERVAL_SEC) { return $script:lastGood }
+    $script:lastCallAt = $now
+    if ($now -ge $script:tokenExpiry) { Invoke-TokenRefresh }
+    try {
+        $r = Invoke-WebRequest -Uri "https://api.spotify.com/v1/me/player/currently-playing" `
+             -Headers @{ Authorization = "Bearer $($script:accessToken)" } `
+             -TimeoutSec $SPOTIFY_TIMEOUT_SEC -UseBasicParsing
+        if ($r.StatusCode -eq 204) { $script:lastGood = '{"is_playing":false}' }
+        else { $script:lastGood = $r.Content }
+        return $script:lastGood
+    } catch {
+        $sec  = 10
+        $resp = $_.Exception.Response
+        if ($resp -and [int]$resp.StatusCode -eq 429) {
+            $ra = $resp.Headers['Retry-After']
+            if ($ra) { [int]::TryParse($ra, [ref]$sec) | Out-Null }
+            if ($sec -gt 3600) { $sec = 3600 }
+            Write-Host "Spotify 429 - backing off ${sec}s (not calling until then)." -ForegroundColor Yellow
+        }
+        $script:backoffUntil = [DateTime]::UtcNow.AddSeconds($sec)
+        return $script:lastGood
+    }
 }
 
-# ── Initial token refresh ──────────────────────────────────────
-Invoke-TokenRefresh
-# ── METADATA ADAPTER (Spotify) ── end
+# ── SMTC state + reader (used only when $MetadataSource -eq 'smtc') ──
+$script:smtcMgr = $null
+$script:asTask  = $null
+
+function Await($op, $resultType) {
+    $t = $script:asTask.MakeGenericMethod($resultType).Invoke($null, @($op))
+    [void]$t.Wait($SPOTIFY_TIMEOUT_SEC * 1000)
+    return $t.Result
+}
+
+# Reads the local Spotify SMTC session into the overlay's JSON contract. No
+# network. Paused/stopped returns is_playing:false but keeps the item (so the
+# card holds the last track unless the overlay's hideWhenPaused flag is set),
+# matching the Web API's currently-playing behavior. Album art via the SMTC
+# thumbnail is a follow-up (WinRT stream marshaling is unreliable from PS 5.1);
+# images stays empty, matching the overlay default (ALBUM_ART_BG off).
+function Get-SmtcPayload {
+    if (-not $script:smtcMgr) { return '{"is_playing":false}' }
+    try {
+        $session = $null
+        foreach ($s in $script:smtcMgr.GetSessions()) {
+            if ($s.SourceAppUserModelId -like '*Spotify*') { $session = $s; break }
+        }
+        if (-not $session) { return '{"is_playing":false}' }
+
+        $props  = Await ($session.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+        $title  = [string]$props.Title
+        $artist = [string]$props.Artist
+        if ([string]::IsNullOrEmpty($title)) { return '{"is_playing":false}' }
+
+        $tl = $session.GetTimelineProperties()
+        $pi = $session.GetPlaybackInfo()
+        $isPlaying = ($pi.PlaybackStatus -eq [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionPlaybackStatus]::Playing)
+
+        $durMs = [int64]((($tl.EndTime) - ($tl.StartTime)).TotalMilliseconds)
+        $posMs = [int64]($tl.Position.TotalMilliseconds)
+        if ($durMs -lt 0) { $durMs = 0 }
+        if ($posMs -lt 0) { $posMs = 0 }
+
+        # Stable track id from title|artist (SMTC exposes no track id).
+        $md5     = [System.Security.Cryptography.MD5]::Create()
+        $idBytes = $md5.ComputeHash([Text.Encoding]::UTF8.GetBytes("$title|$artist"))
+        $id      = (([BitConverter]::ToString($idBytes)) -replace '-','').Substring(0,16).ToLower()
+
+        $obj = [ordered]@{
+            is_playing  = $isPlaying
+            progress_ms = $posMs
+            item = [ordered]@{
+                id          = $id
+                name        = $title
+                artists     = @(@{ name = $artist })
+                album       = [ordered]@{ images = @() }
+                duration_ms = $durMs
+            }
+        }
+        return ($obj | ConvertTo-Json -Depth 6 -Compress)
+    } catch {
+        Write-Host "SMTC read error: $_" -ForegroundColor Red
+        return '{"is_playing":false}'
+    }
+}
+
+# ── Source init ────────────────────────────────────────────────
+if ($MetadataSource -eq 'webapi') {
+    if (-not $CLIENT_ID -or -not $script:refreshToken) {
+        Write-Host ""
+        Write-Host "  ERROR: metadataSource=webapi but Spotify credentials were not provided." -ForegroundColor Red
+        Write-Host "  Use 'Connect Spotify' in the GUI, or switch metadataSource to 'smtc'." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+    Invoke-TokenRefresh
+    Write-Host "Metadata source: Spotify Web API." -ForegroundColor DarkGray
+} else {
+    try {
+        Add-Type -AssemblyName System.Runtime.WindowsRuntime
+        $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager,Windows.Media.Control,ContentType=WindowsRuntime]
+        $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties,Windows.Media.Control,ContentType=WindowsRuntime]
+        $script:asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+            $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+            $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
+        $script:smtcMgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
+        Write-Host "Metadata source: Windows SMTC (local; no OAuth, no rate limits)." -ForegroundColor DarkGray
+    } catch {
+        Write-Host "SMTC init failed: $_" -ForegroundColor Red
+    }
+}
+# ── METADATA ADAPTER ── end
 
 # ── (#2) Cache bg-list JSON at startup ───────────────────────────
 $bgListBytes = $null
@@ -135,34 +239,18 @@ while ($listener.IsListening) {
 
     $res.Headers.Add("Access-Control-Allow-Origin", "*")
 
-    # ── METADATA ADAPTER (Spotify) ── start
-    # Refresh the access token if it is about to expire (a failed refresh
-    # degrades gracefully and does not wedge or crash the loop — FR-010).
-    if ([DateTime]::UtcNow -ge $script:tokenExpiry) { Invoke-TokenRefresh }
-    # ── METADATA ADAPTER (Spotify) ── end
-
     try {
-        # ── METADATA ADAPTER (Spotify) ── start
+        # ── METADATA ADAPTER ── start
         if ($path -eq "api/spotify/current") {
-            #   Bounded, non-blocking currently-playing proxy. -TimeoutSec keeps
-            #   the single-threaded HttpListener loop responsive when Spotify is
-            #   slow; the try/catch degrades to {"is_playing":false} on a
-            #   204 / error / 429 so the overlay holds gracefully (FR-010).
-            $payload = '{"is_playing":false}'
-            try {
-                $spotifyRes = Invoke-WebRequest `
-                    -Uri "https://api.spotify.com/v1/me/player/currently-playing" `
-                    -Headers @{ Authorization = "Bearer $($script:accessToken)" } `
-                    -TimeoutSec $SPOTIFY_TIMEOUT_SEC -UseBasicParsing
-                if ($spotifyRes.StatusCode -ne 204) { $payload = $spotifyRes.Content }
-            } catch {
-                $payload = '{"is_playing":false}'
-            }
+            # Source chosen at startup: SMTC (local, default) or hardened Web API.
+            # Both return the same JSON contract; token refresh + rate-limit
+            # backoff live inside Get-WebApiPayload, so the loop stays simple.
+            $payload = if ($MetadataSource -eq 'webapi') { Get-WebApiPayload } else { Get-SmtcPayload }
             $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
             $res.ContentType = "application/json"
             $res.ContentLength64 = $bytes.Length
             $res.OutputStream.Write($bytes, 0, $bytes.Length)
-            # ── METADATA ADAPTER (Spotify) ── end
+            # ── METADATA ADAPTER ── end
 
         } elseif ($path -eq "bg-list") {
             # (#2) Serve cached bg-list
