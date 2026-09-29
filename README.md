@@ -14,8 +14,11 @@ control panel that starts/stops everything for you.
 
 - **foobar2000 overlay** (`nowplaying-overlay.html`) — now-playing card driven by the
   [Beefweb](https://github.com/hyperblast/beefweb) HTTP API.
-- **Spotify overlay** (`Now-Playing-Spotify/`) — the same card, driven by the Spotify
-  Web API instead of foobar2000.
+- **Spotify overlay** (`Now-Playing-Spotify/`) — the same card, driven by **Windows
+  System Media Transport Controls (SMTC)** by default: it reads whatever the Spotify
+  desktop app is playing locally (the same "now playing" the Win+A media panel shows),
+  so there's **no login, no developer app, and no rate limits**. The Spotify Web API is
+  kept as an optional fallback (see [Spotify now-playing source](#spotify-now-playing-source)).
 - **Border spectrum visualizer** — real FFT data captured from your audio device and
   streamed to the overlay as a soft, frequency-reactive glow.
 - **Configurator** (`configurator.html`) — a visual GUI for tweaking every overlay
@@ -69,7 +72,9 @@ transparent (RGBA `0,0,0,0`).
 ## Requirements
 
 - **foobar2000** with [Beefweb Remote Control](https://github.com/hyperblast/beefweb)
-  (for the foobar2000 overlay), or a Spotify account (for the Spotify overlay).
+  (for the foobar2000 overlay), or the **Spotify desktop app** running (for the Spotify
+  overlay — it reads now-playing locally via SMTC; no account linking or developer app
+  needed). The optional Web API mode additionally needs a Spotify developer Client ID.
 - [OBS Studio](https://obsproject.com/) (or any tool with a browser source).
 - **Python 3.8+** — only for the spectrum visualizer when running from source. The
   prebuilt app bundles its own Python runtime.
@@ -100,6 +105,49 @@ edit the `CONFIG` and `:root` CSS-variable blocks near the top of
 (capture device, bands, gain) and in the overlay HTML (glow colour, blur, depth).
 
 ![configurator preview](configurator-preview.png)
+
+---
+
+## Spotify now-playing source
+
+The Spotify overlay reads track info from one of two sources, selected by the
+`metadataSource` field in `%APPDATA%\FoobarOverlay\settings.json`:
+
+- **`smtc`** (default) — Windows System Media Transport Controls. Reads the Spotify
+  desktop app's local playback (title, artist, play/pause, position/duration). No login,
+  no developer app, no rate limits — just have Spotify running and playing.
+- **`webapi`** — the Spotify Web API. Needs a Spotify developer Client ID and a one-time
+  "Connect Spotify" OAuth in the control panel. It's hardened against rate limits
+  (throttled, backs off on HTTP 429, holds the last track instead of blanking), but
+  `smtc` is simpler and recommended.
+
+Only `webapi` requires a Spotify login. (Album art via SMTC isn't wired up yet, which
+only matters if you turn on the album-art-as-background option.)
+
+---
+
+## Per-scene URL flags
+
+Both overlays accept optional URL query parameters, so a second OBS browser source (e.g. a
+BRB/intermission scene) can render a differently-sized or styled card without touching your
+main source. With no parameters the overlay looks exactly as configured. Example:
+`http://localhost:8081/?spectrumPort=9001&cardWidth=520&mirror=1`.
+
+| Flag | Effect |
+|------|--------|
+| `port` | overlay server port (also used for background images) |
+| `spectrumPort` | visualizer WebSocket port (default `9001`) |
+| `hideWhenPaused=1` | hide the card while playback is paused |
+| `cardWidth`, `cardHeight`, `cardRadius` | card size / corner radius, in px |
+| `cardOpacity` | card background opacity, `0`–`1` |
+| `imgOpacity` | background-image opacity, `0`–`1` |
+| `bgMotion=1` / `bgMotion=0` | enable / disable FFT-reactive background motion |
+| `bgMotionTarget=card` | apply that motion as a glow on the card instead of the image |
+| `mirror=1` | mirrored outward glow that bleeds past the card edge |
+| `mirrorSize`, `mirrorOpacity`, `mirrorBlur` | tune the mirrored glow |
+
+The control panel already appends `?spectrumPort=…` to the OBS URL; add any of the others
+onto the end of that.
 
 ---
 
